@@ -31,7 +31,7 @@ Historical research and broad hackathon preparation live in `city-of-seattle-pre
 | --- | --- |
 | Demo 1 plan | [`docs/demo1/`](docs/demo1/) |
 | Pitch scripts | [`docs/pitch/`](docs/pitch/) |
-| Local Recast data plan | [`docs/data/local-recast-postgres-plan.md`](docs/data/local-recast-postgres-plan.md) |
+| Local Recast data plan | [`docs/data/`](docs/data/) |
 | VSS / live video ingestion | [`docs/vss/`](docs/vss/) |
 | Mobile capture / recast-ios | [`docs/mobile/`](docs/mobile/) |
 | Screenshots and sample outputs | [`assets/`](assets/) |
