@@ -6,6 +6,8 @@ Keep the Acer GN100 lean. Put only the local inference working set on the machin
 
 Supabase remains the durable database. The Acer holds the data needed to make VSS semantic video search, physical-asset understanding, and evidence retrieval fast, private, and resilient during the demo.
 
+Update: if the team chooses to run local PostgreSQL on the GB100, treat it as a curated Recast edge mart named `recast`, not a blind clone of the full Outerspaces/Supabase warehouse. See [../data/local-recast-postgres-plan.md](../data/local-recast-postgres-plan.md).
+
 ## Keep In Supabase
 
 ### Durable Records
