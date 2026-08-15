@@ -14,3 +14,5 @@
 | [`../../scripts/validate-local-recast.sh`](../../scripts/validate-local-recast.sh) | Source row-count validation and hero-building sanity checks |
 
 Current GB100 status: Tier 0 + Tier 1 public foundation loaded and validated in local PostgreSQL `recast`. Private/review-gated datasets are intentionally still excluded.
+
+Webapp/team read-only database access is documented in [local-recast-postgres-plan.md](local-recast-postgres-plan.md#webapp-access). The username is `recast_readonly`; get the temporary password verbally from Peter.

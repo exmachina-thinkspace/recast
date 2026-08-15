@@ -41,6 +41,41 @@ The approved foundation is now running on the Acer GN100.
 
 The loader encountered intermittent GB100 DNS resolution failures against the Supabase pooler during early attempts. The checked-in loader now retries direct copy operations and records failed runs in `meta.load_run`.
 
+## Webapp Access
+
+The database name is `recast`. The app/team login role for read-only access is:
+
+```text
+recast_readonly
+```
+
+Use local PostgreSQL from services running on the GB100:
+
+```text
+host=127.0.0.1
+port=5432
+database=recast
+user=recast_readonly
+password=<ask Peter>
+```
+
+For application code, store the connection string outside Git:
+
+```text
+DATABASE_URL=postgresql://recast_readonly:<ask Peter>@127.0.0.1:5432/recast
+```
+
+Even when the webapp runs locally on the GB100, it should authenticate to PostgreSQL. Local means the database does not need to be exposed publicly; it does not mean unauthenticated access.
+
+The browser/frontend should not connect directly to PostgreSQL. Server-side app code or an API route should connect to the local database and return only the data needed by the UI.
+
+Current role posture:
+
+| Role | Purpose | Posture |
+| --- | --- | --- |
+| `recast_app` | Loader/admin-style local Recast operations | Stored outside Git in GB100 local env files |
+| `recast_readonly` | Webapp/team read access | `SELECT` on current `source_outerspaces`, `recast`, `vss`, `capital`, and `meta` tables; writes blocked |
+
 ## What The Current Docs Say
 
 Current Demo 1 docs say:
