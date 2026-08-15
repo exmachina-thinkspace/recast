@@ -129,6 +129,27 @@ buildings; click a building → card on the right; click plain city or Esc → c
 "Gray map" toggles colour; if `BV` has records, "Color: BHI" appears and recolours. Watch the console for errors.
 Note: Cesium tiles only decode while frames render — a backgrounded tab looks black until it is foregrounded.
 
+## Compound Engineering (how work on this view is done)
+
+The team runs the Compound Engineering loop (`EveryInc/compound-engineering-plugin`): **brainstorm → plan → work →
+simplify → review → compound**. For this view:
+
+- **Plan of record:** `docs/plans/2026-08-15-1644-feat-city-view-3d-plan.md` (repo root `docs/`). Requirements R1–R13,
+  key technical decisions KTD1–KTD8, units U1–U6 shipped, **U7–U10 open** (attach BHI records, map onto the Recast
+  building spine, value-trajectory + permit sections, hero-building choreography). Start a new piece of work with
+  `/ce-plan` against that file (or a new plan in `docs/plans/`) rather than ad hoc.
+- **Learnings already compounded** in `docs/solutions/` — read the ones for your area before touching the code:
+  - `architecture-patterns/highlight-buildings-on-google-photorealistic-3d-tiles.md` — why/how buildings are painted
+  - `runtime-errors/classification-primitive-per-instance-colors-require-ground-primitive.md`
+  - `ui-bugs/cesium-shadow-volume-pick-returns-wrong-building.md` — why hit-testing bypasses pick ids
+  - `best-practices/osm-footprint-matching-for-geocoded-addresses.md`
+  - `best-practices/google-map-tiles-api-key-for-local-html-demos.md`
+  - `developer-experience/single-file-cesium-page-with-inline-data.md`
+  - `conventions/building-record-card-evidence-tiers.md`
+  - `performance-issues/cesium-tiles-black-when-tab-is-hidden.md`
+- **After you fix or learn anything non-obvious here, run `/ce-compound`** so it lands in `docs/solutions/` with the
+  schema above (frontmatter validated by the skill). Keep this file's data-model and integration sections current.
+
 ## Don't
 
 - Don't reintroduce a building list panel (removed by design — the map is the index).

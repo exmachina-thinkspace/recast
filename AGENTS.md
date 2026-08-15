@@ -18,3 +18,10 @@ When promoting material from `city-of-seattle-prep`, bring over only the curated
 Core thesis:
 
 > Every building has a present and a possible future. Recast understands both, and finds the path between them.
+
+## Documented Solutions
+
+`docs/solutions/` — documented solutions to past problems (bugs, best practices, workflow patterns), organized by
+category with YAML frontmatter (`module`, `tags`, `problem_type`). Read the relevant ones before implementing or
+debugging in a documented area; add new learnings with `/ce-compound`. Plans live in `docs/plans/`
+(`ce-plan` unified-plan contract).

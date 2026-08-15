@@ -36,6 +36,8 @@ Historical research and broad hackathon preparation live in `city-of-seattle-pre
 | Mobile capture / recast-ios | [`docs/mobile/`](docs/mobile/) |
 | Screenshots and sample outputs | [`assets/`](assets/) |
 | Citywide 3D view (app prototype) | [`apps/city-view-3d/`](apps/city-view-3d/) |
+| Plans (Compound Engineering) | [`docs/plans/`](docs/plans/) |
+| Documented solutions / learnings | [`docs/solutions/`](docs/solutions/) |
 
 ## Current Proof Points
 
