@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+*.pem
+*.key
+*-KEY.md
+*-key.md
+*secret*
+*credentials*
+secrets/
+node_modules/
+.next/
+dist/
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
