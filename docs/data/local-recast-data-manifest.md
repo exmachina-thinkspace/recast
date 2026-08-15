@@ -1,6 +1,6 @@
 # Local Recast Data Manifest
 
-Status: planning/recon only. No data has been moved, exported, downloaded, loaded, or copied.
+Status: implemented for approved Tier 0 + Tier 1 public foundation on the GB100. Private/review-gated data remains unloaded.
 
 Generated: 2026-08-15.
 
@@ -60,6 +60,59 @@ recommended Tier 1 attention set:     67
 ```
 
 This is the smallest useful Tier 1 I found: broad enough for a citywide Recast attention layer, but small enough to remain inspectable, defensible, and demo-safe.
+
+## Implementation Result - 2026-08-15
+
+The approved Tier 0 + Tier 1 public foundation was loaded directly from Outerspaces/Supabase into the GB100 local PostgreSQL database named `recast`.
+
+| Item | Result |
+| --- | --- |
+| Load run | `recast_20260815T223718Z` |
+| Transfer | GB100 direct `psql` pull from Supabase pooler |
+| Mac staging | None |
+| Local database | `recast` |
+| Source schema loaded | `source_outerspaces` |
+| Derived schema built | `recast` |
+| Empty future schemas created | `vss`, `capital` |
+| Lineage schema | `meta` |
+| Validation | 14/14 source row-count checks passed |
+| Recorded validation | `meta.row_count_check` contains 14 checks for the successful run |
+| Database footprint | `10 MB` |
+
+The source tables intentionally preserve Tier 0 and Tier 1 rows separately, even when a hero building also appears in the Tier 1 attention set. Recast-derived tables dedupe those overlaps into 69 unique local buildings.
+
+## Loaded Source Tables
+
+| Destination | Tier 0 rows | Tier 1 rows | Status |
+| --- | ---: | ---: | --- |
+| `source_outerspaces.building_profile_with_coords_subset` | 4 | 67 | loaded + validated |
+| `source_outerspaces.parcel_subset` | 4 | 67 | loaded + validated |
+| `source_outerspaces.kingcounty_raw_parcel_subset` | 4 | 67 | loaded + validated |
+| `source_outerspaces.assessed_value_history_subset` | 198 | 3,687 | loaded + validated |
+| `source_outerspaces.permit_history_subset` | 60 | 1,383 | loaded + validated |
+| `source_outerspaces.availability_signal` | 2 | 49 | loaded + validated |
+| `source_outerspaces.seattle_building_energy_benchmarking_subset` | 20 | 319 | loaded + validated |
+
+Support tables loaded:
+
+| Destination | Rows | Status |
+| --- | ---: | --- |
+| `source_outerspaces.market` | 3 | loaded |
+| `source_outerspaces.asset_class_taxonomy` | 255 | loaded |
+
+## Built Recast Tables
+
+| Relation | Rows | Notes |
+| --- | ---: | --- |
+| `recast.building` | 69 | Unique local building spine after Tier overlap dedupe |
+| `recast.building_signal_snapshot` | 69 | Initial source-backed signal snapshot |
+| `recast.building_attention_candidate` | 69 | Initial opportunity/attention layer from source filters |
+| `recast.building_availability` | 69 | Availability where source rows exist, nullable otherwise |
+| `recast.building_energy_signal` | 69 | Energy rows summarized where source rows exist |
+| `recast.building_permit_activity` | 69 | Permit activity summary |
+| `recast.building_value_trajectory` | 67 | Two local buildings lack usable assessed-value history in the loaded subset |
+
+No `capital.*` or `vss.*` rows were generated because those layers require real program-fit analysis and real VSS/video evidence, not speculative filler.
 
 ## Tier Definitions
 

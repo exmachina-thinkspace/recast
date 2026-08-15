@@ -39,6 +39,7 @@ Historical research and broad hackathon preparation live in `city-of-seattle-pre
 ## Current Proof Points
 
 - Demo 1 thesis and acceptance criteria are drafted.
+- GB100 local PostgreSQL `recast` foundation is live with Tier 0 + Tier 1 public Outerspaces data loaded directly from Supabase and validated.
 - iPhone live video ingestion has been verified through a Larix-style path: mobile H.264 video push -> MediaMTX -> RTSP -> Acer GN100 / VIOS.
 - NVIDIA VSS semantic "Ctrl-F for a building" remains a gating experiment until live or recorded clip query results are verified.
 - Capital-stack intelligence is included as a product layer, but specific building/program eligibility must remain explicitly classified as verified, potentially relevant, unknown, or not eligible.

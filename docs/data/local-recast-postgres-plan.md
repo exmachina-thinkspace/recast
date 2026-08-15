@@ -1,6 +1,6 @@
 # Local Recast PostgreSQL Plan
 
-Status: plan only. No data has been moved, exported, downloaded, or loaded.
+Status: implemented through Tier 0 + Tier 1 public foundation on the GB100. No Mac mini persistent staging database was created.
 
 ## Question
 
@@ -18,6 +18,28 @@ Outerspaces Supabase
 ```
 
 Supabase remains the upstream source of truth until the team explicitly changes that architecture. The local `recast` database is the offline/demo/runtime copy optimized for the hackathon workflow.
+
+## Implementation Status - 2026-08-15
+
+The approved foundation is now running on the Acer GN100.
+
+| Item | Actual |
+| --- | --- |
+| Machine | `gn100-3315`, Acer Veriton GN100 |
+| OS | Ubuntu 24.04.4 LTS, Linux `6.17.0-1029-nvidia`, arm64 |
+| PostgreSQL | PostgreSQL 16.14, native apt install |
+| Cluster | `16/main`, port `5432`, data directory `/var/lib/postgresql/16/main` |
+| Local database | `recast` |
+| Local schemas | `source_outerspaces`, `recast`, `vss`, `capital`, `meta` |
+| Disk | `/dev/nvme0n1p2`, 3.7T total, 3.1T available during setup |
+| Docker | Installed, but not used for PostgreSQL |
+| Secrets | GB100 local files under `~/.config/recast/`, outside Git |
+| Transfer mechanism | GB100 direct `psql` pull from Outerspaces Supabase pooler |
+| Mac mini role | Orchestration only; no persistent staging DB or export directory |
+| Successful load run | `recast_20260815T223718Z` |
+| Local DB footprint | `10 MB` after Tier 0 + Tier 1 public foundation |
+
+The loader encountered intermittent GB100 DNS resolution failures against the Supabase pooler during early attempts. The checked-in loader now retries direct copy operations and records failed runs in `meta.load_run`.
 
 ## What The Current Docs Say
 
@@ -235,7 +257,11 @@ Lineage and validation:
 
 ## Migration Mechanics
 
-Plan only. Do not run until approved.
+Implemented for Tier 0 + Tier 1 public foundation in:
+
+- `db/schema/001_local_recast.sql`
+- `scripts/load-local-recast.sh`
+- `scripts/validate-local-recast.sh`
 
 ### 1. Inventory
 
@@ -280,7 +306,9 @@ create database recast;
 
 Use local-only credentials stored outside Git.
 
-### 4. Export
+This is complete on the GB100.
+
+### 4. Export / Direct Pull
 
 For filtered subsets, prefer query-based exports rather than full table dumps:
 
@@ -294,11 +322,15 @@ COPY (
 
 Use full-table dump only for tiny relations such as `warehouse.availability_signal`.
 
+The current implementation does not dump files. It runs filtered `\copy (SELECT ...) TO STDOUT` queries from the GB100 against Outerspaces/Supabase and pipes them directly into local PostgreSQL.
+
 ### 5. Load
 
 Load into `source_outerspaces` staging tables first.
 
 Then build `recast`, `vss`, and `capital` product tables/views from those staged relations.
+
+This is complete for public Tier 0 + Tier 1 source tables and the initial normalized `recast` layer. `vss` and `capital` schemas exist but are intentionally not populated with speculative data.
 
 ### 6. Validate
 
@@ -312,6 +344,39 @@ For every table:
 - permit rows match source;
 - no unreviewed private rows are promoted as facts;
 - source timestamps and export timestamps are recorded.
+
+Validation is complete for source row counts. The latest successful run wrote 14 row-count checks to `meta.row_count_check`.
+
+| Tier | Source relation | Expected | Actual | Status |
+| --- | --- | ---: | ---: | --- |
+| Tier 0 | `source_outerspaces.building_profile_with_coords_subset` | 4 | 4 | pass |
+| Tier 1 | `source_outerspaces.building_profile_with_coords_subset` | 67 | 67 | pass |
+| Tier 0 | `source_outerspaces.parcel_subset` | 4 | 4 | pass |
+| Tier 1 | `source_outerspaces.parcel_subset` | 67 | 67 | pass |
+| Tier 0 | `source_outerspaces.kingcounty_raw_parcel_subset` | 4 | 4 | pass |
+| Tier 1 | `source_outerspaces.kingcounty_raw_parcel_subset` | 67 | 67 | pass |
+| Tier 0 | `source_outerspaces.assessed_value_history_subset` | 198 | 198 | pass |
+| Tier 1 | `source_outerspaces.assessed_value_history_subset` | 3,687 | 3,687 | pass |
+| Tier 0 | `source_outerspaces.permit_history_subset` | 60 | 60 | pass |
+| Tier 1 | `source_outerspaces.permit_history_subset` | 1,383 | 1,383 | pass |
+| Tier 0 | `source_outerspaces.availability_signal` | 2 | 2 | pass |
+| Tier 1 | `source_outerspaces.availability_signal` | 49 | 49 | pass |
+| Tier 0 | `source_outerspaces.seattle_building_energy_benchmarking_subset` | 20 | 20 | pass |
+| Tier 1 | `source_outerspaces.seattle_building_energy_benchmarking_subset` | 319 | 319 | pass |
+
+Derived local Recast row counts after Tier overlap dedupe:
+
+| Relation | Rows |
+| --- | ---: |
+| `recast.building` | 69 |
+| `recast.building_signal_snapshot` | 69 |
+| `recast.building_attention_candidate` | 69 |
+| `recast.building_availability` | 69 |
+| `recast.building_energy_signal` | 69 |
+| `recast.building_permit_activity` | 69 |
+| `recast.building_value_trajectory` | 67 |
+
+`recast.building_value_trajectory` has 67 rows because two of the 69 unique local buildings do not currently have usable assessed-value history in the loaded source subset.
 
 ### 7. Cutover For Demo
 
@@ -337,34 +402,24 @@ Do not move yet:
 - personal/local machine paths;
 - anything not used in the demo or immediate Recast app.
 
-## Open Questions
+## Remaining Open Questions
 
-Before implementation:
+Resolved:
 
-1. What is the GB100 disk layout and free space?
-2. Will PostgreSQL run directly on host or in Docker?
-3. Does the demo app need PostGIS locally, or are precomputed GeoJSON/vector tiles enough?
-4. Which exact geography defines Tier 1: downtown only, Seattle citywide, King County, or selected corridors?
-5. Are private JLL and distress seed rows allowed in the judge-facing demo if summarized and source-labeled?
-6. Do we need local writes during the demo, or is read-mostly enough?
-7. Should Supabase continue as upstream after the hackathon, or is this the beginning of a Recast-owned database migration?
+1. GB100 disk layout and free space are sufficient for the approved edge mart.
+2. PostgreSQL runs directly on the host, not in Docker.
+3. PostGIS is not required for the current Tier 0 + Tier 1 manifest because the demo currently uses centroids, not local geometry operations.
+4. Tier 1 is the documented 67-building downtown/SLU office opportunity working set.
 
-## Recommended First Implementation Step
+Still open:
 
-Do not move data yet.
+1. Are private JLL and distress seed rows allowed in the judge-facing demo if summarized and source-labeled?
+2. Do we need local writes during the demo beyond generated Recast/VSS outputs?
+3. Should Supabase continue as upstream after the hackathon, or is this the beginning of a Recast-owned database migration?
+4. Should we add local PostGIS later after the building footprint join is verified?
 
-First produce:
+## Recommended Next Implementation Step
 
-```text
-docs/data/recast-local-db-manifest.md
-```
+Connect the Recast application/API to local PostgreSQL in read-only mode, using `recast.*` for product intelligence and `source_outerspaces.*` only when the UI needs to show underlying evidence.
 
-Then run only metadata/count queries to estimate:
-
-- filtered Tier 0 rows;
-- filtered Tier 1 rows;
-- expected disk size;
-- needed indexes;
-- load time.
-
-After the manifest is approved, load Tier 0 into a local `recast` database and validate it end to end before expanding.
+Do not load private/review-gated data until licensing and judge-facing posture are resolved.
