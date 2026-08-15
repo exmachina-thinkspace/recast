@@ -1,0 +1,3 @@
+.DS_Store
+# Overpass cache (~12 MB) — tools/build_footprints.py --refetch recreates it
+data/osm_raw.json

@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seattle Office Vitals — 3D</title>
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.128/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.128/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<style>
+:root{
+  /* light cards over the dark/gray city */
+  --surface:#FFFFFF; --surface-2:#F1F3F5; --ink:#1B2229; --ink-2:#4A5561; --ink-3:#7A8590;
+  --rule:#E3E7EB; --rule-2:#C9D0D6; --accent:#2F7FAB; --accent-2:#24688C; --on-accent:#FFFFFF;
+  --map-sel:#35D6F5;                     /* selected-building paint in the 3D view: saturated cyan, reads against gray + oranges */
+  --v0:#F2764A; --v1:#D2673E; --v2:#AE5836; --v3:#83452C; --v4:#5B3325; --vnull:#5E6B75;
+  --h0:#F2764A; --h1:#E89A57; --h2:#E0C062; --h3:#9CC77A; --h4:#4FAE85;   /* Building Health Index ramp: critical → healthy */
+  --font-display:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --font-ui:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+  --font-data:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0F141A;color:var(--ink);font-family:var(--font-ui);font-size:14px}
+#cesium{position:absolute;inset:0}
+.cesium-viewer-bottom{left:auto!important;right:8px!important}      /* keep Google credit visible, out of our panel's way */
+.cesium-widget-credits{color:#cfd6dc!important;font-size:11px!important}
+.cesium-viewer .cesium-widget-credits a{color:#cfd6dc!important}
+
+/* ---- side panel ---- */
+.panel{
+  position:absolute;top:14px;left:14px;width:340px;max-height:calc(100% - 28px);
+  display:flex;flex-direction:column;gap:10px;pointer-events:none;
+}
+.panel.right{left:auto;right:14px;width:360px}
+.panel > *{pointer-events:auto}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:3px;box-shadow:0 1px 2px rgba(0,0,0,.25),0 8px 24px rgba(0,0,0,.25)}
+.head{padding:13px 15px 12px;display:flex;flex-direction:column;gap:5px}
+h1{font-family:var(--font-display);font-weight:400;font-size:21px;margin:0;line-height:1.15}
+.head p{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.45}
+
+.controls{padding:10px 15px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;border-top:1px solid var(--rule)}
+.chip{font-size:12px;padding:4px 10px;border-radius:100px;cursor:pointer;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--rule-2)}
+.chip:hover{border-color:var(--accent);color:var(--ink)}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.chip:focus-visible,.row:focus-visible,.act:focus-visible,input:focus-visible,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.legend{padding:10px 15px;border-top:1px solid var(--rule);display:flex;flex-direction:column;gap:7px}
+.legend h3{font-family:var(--font-data);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);margin:0;font-weight:400}
+.ramp{display:flex;height:8px;border-radius:2px;overflow:hidden}.ramp span{flex:1}
+.ramp-ends{display:flex;justify-content:space-between;font-family:var(--font-data);font-size:10px;color:var(--ink-3)}
+.lkey{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-2)}
+.lkey i{width:10px;height:10px;border-radius:50%;flex:none}
+
+/* ---- building card (shown on click) ---- */
+.detail{padding:14px 15px 16px;display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0;flex:0 1 auto}
+.detail[hidden]{display:none}
+.d-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.d-idx{font-family:var(--font-data);font-size:10.5px;color:var(--ink-3);letter-spacing:.08em}
+.d-name{font-family:var(--font-display);font-size:18px;line-height:1.2;margin:0}
+.d-addr{font-family:var(--font-data);font-size:11.5px;color:var(--ink-2);margin:0}
+.close{flex:none;width:26px;height:26px;border-radius:3px;border:1px solid var(--rule-2);background:var(--surface-2);color:var(--ink-2);font-size:15px;line-height:1;cursor:pointer}
+.close:hover{border-color:var(--accent);color:var(--ink)}
+.bhi{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;align-items:center;padding:10px 12px;border-radius:3px;background:var(--surface-2);border:1px solid var(--rule-2)}
+.bhi .num{font-family:var(--font-display);font-size:34px;line-height:1;color:var(--ink-3);grid-row:span 2}
+.bhi .num.scored{color:var(--ink)}
+.bhi .lbl{font-family:var(--font-data);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3)}
+.bhi .sub{font-size:11.5px;color:var(--ink-2);line-height:1.4}
+.vitals{display:flex;flex-direction:column;border-top:1px solid var(--rule)}
+.vital{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:12px}
+.vital .vn{color:var(--ink)}
+.vital .ve{grid-column:1 / -1;font-size:11.5px;color:var(--ink-3);line-height:1.4}
+.tier{font-family:var(--font-data);font-size:9.5px;letter-spacing:.1em;padding:2px 6px;border-radius:2px;border:1px solid var(--rule-2);color:var(--ink-3);align-self:start;white-space:nowrap}
+.tier.known{color:var(--accent-2);border-color:var(--accent)}
+.tier.inferred{color:#8A5A0B;border-color:#D9A44A}
+.tier.observed{color:#2F6B3B;border-color:#7DB68A}
+.src{font-family:var(--font-data);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);margin:6px 0 0}
+.d-rows{display:flex;flex-direction:column;border-top:1px solid var(--rule)}
+.d-row{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:12.5px}
+.d-row dt{color:var(--ink-3)}.d-row dd{margin:0;font-family:var(--font-data);font-variant-numeric:tabular-nums;text-align:right}
+.acts{display:flex;gap:7px}
+.act{flex:1;text-align:center;text-decoration:none;font-size:12.5px;padding:7px 10px;border-radius:3px;border:1px solid var(--rule-2);color:var(--ink-2);background:var(--surface-2);cursor:pointer;font-family:inherit}
+.act:hover{border-color:var(--accent);color:var(--ink)}
+.act.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);flex:1.6}
+.flag{font-size:11.5px;line-height:1.45;padding:8px 10px;border-radius:3px;background:var(--surface-2);color:var(--ink-2);border-left:2px solid var(--vnull)}
+.nodata{color:var(--ink-3)}
+
+/* ---- key gate ---- */
+.gate{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,20,26,.86);z-index:5}
+.gate .card{width:min(520px,calc(100% - 32px));padding:22px 24px;display:flex;flex-direction:column;gap:12px}
+.gate h2{font-family:var(--font-display);font-weight:400;font-size:22px;margin:0}
+.gate p{margin:0;font-size:13px;color:var(--ink-2);line-height:1.5}
+.gate ol{margin:0;padding-left:18px;font-size:13px;color:var(--ink-2);line-height:1.55}
+.gate code{font-family:var(--font-data);font-size:12px;color:var(--accent-2)}
+.gate label{font-family:var(--font-data);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.gate input{width:100%;padding:9px 11px;font-family:var(--font-data);font-size:13px;background:#FFFFFF;color:var(--ink);border:1px solid var(--rule-2);border-radius:3px}
+.gate .rowb{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.btn{padding:8px 16px;border-radius:3px;border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font-size:13px;cursor:pointer}
+.btn.quiet{background:transparent;color:var(--ink-2);border-color:var(--rule-2)}
+.err{font-size:12.5px;color:#F2764A;line-height:1.45}
+.status{position:absolute;right:14px;top:14px;background:var(--surface);border:1px solid var(--rule);border-radius:3px;padding:7px 11px;font-size:12px;color:var(--ink-2);font-family:var(--font-data);display:none}
+</style>
+</head>
+<body>
+<div id="cesium"></div>
+<div class="status" id="status"></div>
+
+<div class="panel">
+  <div class="card">
+    <div class="head">
+      <h1>Seattle Office Vitals</h1>
+      <p>Click a painted building to open its record.</p>
+    </div>
+    <div class="controls" id="controls">
+      <button class="chip" data-f="all" aria-pressed="true">All 124</button>
+      <button class="chip" data-f="vacant" aria-pressed="false">&le;25% leased</button>
+      <button class="chip" data-f="empty" aria-pressed="false">&le;10%</button>
+      <button class="chip" data-f="noenergy" aria-pressed="false">No energy value</button>
+      <button class="chip" id="colorby" aria-pressed="false" hidden title="Color buildings by Building Health Index instead of leased share">Color: BHI</button>
+      <button class="chip" id="gray" aria-pressed="true" style="margin-left:auto" title="Desaturate Google's imagery so the building colors stand out">Gray map</button>
+      <button class="chip" id="reset">Reset view</button>
+    </div>
+    <div class="legend">
+      <h3 id="lg-title">Share of building leased</h3>
+      <div class="ramp" id="lg-ramp"><span style="background:var(--v0)"></span><span style="background:var(--v1)"></span><span style="background:var(--v2)"></span><span style="background:var(--v3)"></span><span style="background:var(--v4)"></span></div>
+      <div class="ramp-ends"><span id="lg-lo">0% — empty</span><span id="lg-hi">75%+</span></div>
+      <div class="lkey"><i style="background:var(--vnull)"></i> <span id="lg-null">Leased share not disclosed</span></div>
+      <div class="lkey"><i style="background:var(--ink-3);width:7px;height:7px;outline:2px solid var(--ink-2);outline-offset:1px"></i> Pin = no footprint on file yet <span id="nofp"></span></div>
+      <div class="ramp-ends" style="justify-content:flex-start">Footprints © OpenStreetMap contributors</div>
+    </div>
+  </div>
+</div>
+<div class="panel right">
+  <div class="card detail" id="detail" aria-live="polite" hidden></div>
+</div>
+
+<div class="gate" id="gate">
+  <div class="card">
+    <h2>Google Maps Platform key needed</h2>
+    <p>Google's photorealistic 3D tiles stream directly from Google and require your own API key. The key is kept in this
+    browser's local storage and is sent only to <code>tile.googleapis.com</code>. Nothing here goes anywhere else.</p>
+    <ol>
+      <li>In Google Cloud Console, create or pick a project and enable the <b>Map Tiles API</b>.</li>
+      <li>Create an API key. Restrict it to the Map Tiles API. If you serve this page from <code>localhost</code>, add an HTTP-referrer restriction for it too.</li>
+      <li>Paste it below. You can also open this file with <code>?key=YOUR_KEY</code> in the address bar.</li>
+    </ol>
+    <label for="key">API key</label>
+    <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
+    <div class="err" id="err"></div>
+    <div class="rowb">
+      <button class="btn quiet" id="forget" type="button" title="Remove any key stored in this browser">Forget stored key</button>
+      <button class="btn" id="go" type="button">Load 3D map</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const B = [{"i":1,"a":"3800 Latona Ave NE","n":"Northlake Commons","la":47.65429,"lo":-122.32618,"r":null,"l":null,"y":2024,"e":null,"g":40028,"u":"Non-Refrigerated Warehouse","nb":"LAKE UNION","m":"near","s":null,"ma":"3801 Latona Ave NE","mn":"Dunn Lumber","my":"1938","f":4},{"i":2,"a":"1616 Eastlake Ave E","n":"Eastlake Life Science Campus","la":47.63456,"lo":-122.32454,"r":null,"l":null,"y":2002,"e":239.0,"g":281306,"u":"Parking","nb":"LAKE UNION","m":"exact","s":null,"ma":"1616 Eastlake Ave E","mn":"1616 Eastlake Building","my":"2002","f":5},{"i":3,"a":"1633 Westlake Ave N","n":"","la":47.63347,"lo":-122.34078,"r":95755,"l":33.5,"y":2000,"e":22.9,"g":189775,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":null,"ma":"1633 Westlake Ave N","mn":"1633 Westlake Building","my":"2000","f":4},{"i":4,"a":"1505 Westlake Ave N","n":"West Lake Union Office Center","la":47.63264,"lo":-122.34171,"r":381511,"l":64.0,"y":1994,"e":48.9,"g":381511,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"high","s":82,"ma":"1505 Westlake Ave N","mn":"West Lake Union Center","my":"1994","f":10},{"i":5,"a":"1208 Eastlake Ave E","n":"Earl Davie Building","la":47.63079,"lo":-122.32693,"r":null,"l":null,"y":1999,"e":345.1,"g":128408,"u":"Laboratory","nb":"LAKE UNION","m":"exact","s":null,"ma":"1208 Eastlake Ave E","mn":"1208 Eastlake Ave E (Dendreon)","my":"1999","f":4},{"i":6,"a":"1150 Eastlake Ave E","n":"Eleven 50","la":47.62998,"lo":-122.32776,"r":311632,"l":68.1,"y":2023,"e":94.9,"g":579885,"u":"Office","nb":"LAKE UNION","m":"exact","s":null,"ma":"1150 Eastlake Ave E","mn":"1150 Eastlake","my":"2023","f":11},{"i":7,"a":"1101 Westlake Ave N","n":"1101 Westlake","la":47.62908,"lo":-122.3414,"r":155355,"l":0.0,"y":2015,"e":29.5,"g":185116,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"high","s":null,"ma":"1101 Westlake Ave N","mn":"1101 Westlake","my":"2015","f":6},{"i":8,"a":"1000 Dexter Ave N","n":"Dexter Landing South","la":47.62817,"lo":-122.34212,"r":110524,"l":59.3,"y":1998,"e":40.5,"g":240454,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":88,"ma":"1000 Dexter Ave N","mn":"1000 Dexter Phase Ii","my":"1998","f":5},{"i":9,"a":"700 Dexter Ave N","n":"Dexter Yard South Bldg","la":47.62566,"lo":-122.34181,"r":266918,"l":64.7,"y":2021,"e":57.0,"g":716128,"u":"Laboratory","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":null,"ma":"700 Dexter Ave N","mn":"700 Dexter Yard Bio Tech Building","my":"2021","f":12},{"i":10,"a":"701 Dexter Ave N","n":"701 Dexter","la":47.62566,"lo":-122.34287,"r":266898,"l":34.1,"y":2025,"e":19.1,"g":95721,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":86,"ma":"701 Dexter Ave N","mn":"701 Dexter Building","my":"1984","f":11},{"i":11,"a":"630 Westlake Ave N","n":"The Edge at Lake Union","la":47.62477,"lo":-122.33835,"r":348000,"l":0.0,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":6},{"i":12,"a":"635 Elliott Ave W","n":"635 Elliott West - South Building","la":47.6252,"lo":-122.36737,"r":190956,"l":49.8,"y":2008,"e":44.9,"g":291176,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":65,"ma":"635 Elliott Ave W","mn":"635 Elliott - South Building","my":"2009","f":4},{"i":13,"a":"617 Eastlake Ave E","n":"617 Eastlake Building","la":47.62488,"lo":-122.33007,"r":93895,"l":48.7,"y":1990,"e":38.3,"g":144573,"u":"Office","nb":"LAKE UNION","m":"exact","s":86,"ma":"617 Eastlake Ave E","mn":"Eastlake & Roy - Yale Campus","my":"1990","f":5},{"i":14,"a":"200 W Mercer St","n":"Queen Anne Square East","la":47.62497,"lo":-122.35965,"r":103242,"l":66.4,"y":1982,"e":30.8,"g":98668,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"high","s":89,"ma":"200 W Mercer St","mn":"Queen Anne Square East","my":"1982","f":5},{"i":15,"a":"570 Mercer St","n":"Interval On Mercer - Phase 1","la":47.62461,"lo":-122.34535,"r":null,"l":null,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":8},{"i":16,"a":"570 Mercer St","n":"Interval On Mercer \u2013 Phase 2","la":47.62461,"lo":-122.34535,"r":238000,"l":3.6,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":8},{"i":17,"a":"535 8th Ave N","n":"Block 55N","la":47.6237,"lo":-122.34114,"r":319000,"l":0.0,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":11},{"i":18,"a":"530 Fairview Ave N","n":"Vue Research Center","la":47.62395,"lo":-122.33392,"r":104400,"l":0.0,"y":2015,"e":145.4,"g":129093,"u":"Laboratory","nb":"LAKE UNION","m":"high","s":null,"ma":"530 Fairview Ave N","mn":"Biomed Fairview Research Center","my":"2008","f":6},{"i":19,"a":"501 Elliott Ave W","n":"Unison Elliott Bay 501","la":47.62302,"lo":-122.36476,"r":114310,"l":73.3,"y":2000,"e":71.7,"g":165111,"u":"Laboratory","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":null,"ma":"501 Elliott Ave W","mn":"Elliott West Bldg 3 - Cell Therepeutics/Admin. Off","my":"2000","f":4},{"i":20,"a":"415 1st Ave N","n":"Queen Anne Station","la":47.623,"lo":-122.35589,"r":76507,"l":73.2,"y":1964,"e":63.5,"g":127735,"u":"Parking","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":null,"ma":"415 1st Ave N","mn":"Queen Anne Station","my":"1964","f":4},{"i":21,"a":"428 Westlake Ave N","n":"","la":47.62286,"lo":-122.33804,"r":88514,"l":8.5,"y":2004,"e":69.5,"g":139282,"u":"Office","nb":"LAKE UNION","m":"exact","s":64,"ma":"428 Westlake Ave N","mn":"428 Westlake Building","my":"2004","f":6},{"i":22,"a":"401 Elliott Ave W","n":"Unison Elliott Bay 401","la":47.62235,"lo":-122.36378,"r":75764,"l":0.0,"y":2000,"e":66.3,"g":129551,"u":"Parking","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":null,"ma":"401 Elliott Ave W","mn":"401 Elliott West","my":"2000","f":4},{"i":23,"a":"400 2nd Ave W","n":"West Tower","la":47.62225,"lo":-122.35915,"r":163595,"l":26.7,"y":2000,"e":29.3,"g":241875,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":null,"ma":"400 2nd Ave W","mn":"West Tower","my":"2000","f":7},{"i":24,"a":"400 Westlake Ave N","n":"400 Westlake","la":47.62237,"lo":-122.33805,"r":226876,"l":10.0,"y":2023,"e":14.7,"g":268005,"u":"Office","nb":"LAKE UNION","m":"high","s":98,"ma":"400 Westlake Ave N","mn":"400 Westlake Building","my":"2022","f":17},{"i":25,"a":"351 Elliott Ave W","n":"Unison Elliott Bay 351","la":47.62175,"lo":-122.36313,"r":108427,"l":0.0,"y":2000,"e":26.2,"g":162420,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":null,"ma":"351 Elliott Ave W","mn":"Clear Channel (Ackerly)- Bldg 1","my":"2000","f":5},{"i":26,"a":"312 9th Ave N","n":"Block 46W","la":47.62106,"lo":-122.33968,"r":264000,"l":0.0,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":11},{"i":27,"a":"330 Yale Ave N","n":"330 Yale","la":47.6212,"lo":-122.33034,"r":211555,"l":19.9,"y":2021,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":9},{"i":28,"a":"300 Elliott Ave W","n":"Elliott Bay Office Park","la":47.62177,"lo":-122.36158,"r":250000,"l":68.2,"y":1981,"e":24.2,"g":275734,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"high","s":97,"ma":"300 Elliott Ave W","mn":"Elliott Bay Office Park","my":"1981","f":5},{"i":29,"a":"307-319 Westlake Ave N","n":"CIDR Center","la":47.621,"lo":-122.33855,"r":null,"l":null,"y":2004,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":5},{"i":30,"a":"300 Dexter Ave N","n":"Block 57W","la":47.62094,"lo":-122.3423,"r":215800,"l":12.4,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":11},{"i":31,"a":"333 Elliott Ave W","n":"333 Elliott West","la":47.62101,"lo":-122.36188,"r":134260,"l":68.0,"y":2008,"e":33.0,"g":183964,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"exact","s":87,"ma":"333 Elliott Ave W","mn":"333 Elliott","my":"2008","f":5},{"i":32,"a":"618 John St","n":"Skyblox","la":47.61979,"lo":-122.34475,"r":251285,"l":9.7,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":9},{"i":33,"a":"222 5th Ave N","n":"","la":47.61999,"lo":-122.3475,"r":220754,"l":20.8,"y":2024,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":9},{"i":34,"a":"1120 John St","n":"Tower II","la":47.61975,"lo":-122.3352,"r":472500,"l":0.0,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":17},{"i":35,"a":"201-263 Yale Ave N","n":"Alley24 - East Block","la":47.61973,"lo":-122.3305,"r":215402,"l":70.7,"y":2005,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":6},{"i":36,"a":"190 Queen Anne Ave N","n":"","la":47.61949,"lo":-122.35639,"r":83600,"l":0.0,"y":1974,"e":23.6,"g":102930,"u":"Office","nb":"MAGNOLIA / QUEEN ANNE","m":"high","s":null,"ma":"190 Queen Anne Ave N","mn":"190 Queen Anne","my":"1974","f":5},{"i":37,"a":"111 Westlake Ave N","n":"111 Westlake","la":47.6187,"lo":-122.33857,"r":403000,"l":3.5,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":18},{"i":38,"a":"1000 Denny Way","n":"101 Boren","la":47.61907,"lo":-122.33651,"r":263170,"l":32.6,"y":1965,"e":175.4,"g":287819,"u":"Office","nb":"LAKE UNION","m":"high","s":17,"ma":"1000 Denny Way","mn":"1000 Denny Way Building","my":"1929","f":8},{"i":39,"a":"2201 Westlake Ave","n":"2201 Westlake","la":47.61783,"lo":-122.33729,"r":null,"l":null,"y":2009,"e":60.9,"g":516407,"u":"Parking","nb":"DOWNTOWN","m":"near","s":95,"ma":"2200 Westlake Ave","mn":"2200 Westlake","my":"2006","f":12},{"i":40,"a":"2901 3rd Ave","n":"Third & Broad","la":47.6182,"lo":-122.352,"r":396626,"l":73.8,"y":1982,"e":30.1,"g":396626,"u":"Office","nb":"DOWNTOWN","m":"high","s":93,"ma":"2901 3rd Ave","mn":"Third And Broad Bldg","my":"1982","f":6},{"i":41,"a":"3131 Elliott Ave","n":"3131 Elliott","la":47.61813,"lo":-122.35833,"r":null,"l":null,"y":1986,"e":46.1,"g":277486,"u":"Office","nb":"DOWNTOWN","m":"exact","s":72,"ma":"3131 Elliott Ave","mn":"3131 Elliott Bldg","my":"1986","f":7},{"i":42,"a":"3101 Western Ave","n":"3101 Western","la":47.6176,"lo":-122.35686,"r":210450,"l":49.3,"y":1984,"e":185.8,"g":253103,"u":"Office","nb":"DOWNTOWN","m":"high","s":2,"ma":"3101 Western Ave","mn":"3101 Western (Formerly Airborne Bldg)","my":"1984","f":8},{"i":43,"a":"1930 Boren Ave","n":"Boren Labs","la":47.61769,"lo":-122.3335,"r":143127,"l":65.7,"y":2021,"e":66.0,"g":199398,"u":"Office","nb":"DOWNTOWN","m":"exact","s":null,"ma":"1930 Boren Ave","mn":"Boren Loft Labs","my":"2020","f":10},{"i":44,"a":"1220 Howell St","n":"Metropolitan Park North Tower","la":47.6177,"lo":-122.3306,"r":195067,"l":24.2,"y":2000,"e":35.7,"g":380312,"u":"Parking","nb":"DOWNTOWN","m":"exact","s":93,"ma":"1220 Howell St","mn":"Metropolitan Park North Building","my":"2000","f":11},{"i":45,"a":"1916 Boren Ave","n":"1916 Boren","la":47.61714,"lo":-122.33292,"r":282741,"l":46.4,"y":2025,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":11},{"i":46,"a":"2601 4th Ave","n":"Fourth & Vine","la":47.61732,"lo":-122.34791,"r":123444,"l":40.9,"y":1975,"e":37.4,"g":150000,"u":"Office","nb":"DOWNTOWN","m":"high","s":86,"ma":"2601 4th Ave","mn":"Fourth & Vine Bldg","my":"1975","f":8},{"i":47,"a":"2815 2nd Ave","n":"Bay Vista Office Tower","la":47.61706,"lo":-122.35141,"r":119793,"l":62.3,"y":1982,"e":73.4,"g":119701,"u":"Office","nb":"DOWNTOWN","m":"high","s":68,"ma":"2815 2nd Ave","mn":"Bay Vista Office Building","my":"1982","f":5},{"i":48,"a":"1730 Minor Ave","n":"Met Park East","la":47.61695,"lo":-122.32965,"r":389000,"l":52.6,"y":1988,"e":30.3,"g":497513,"u":"Office","nb":"DOWNTOWN","m":"high","s":83,"ma":"1730 Minor Ave","mn":"Metropolitan Park East","my":"1988","f":20},{"i":49,"a":"1099 Stewart St","n":"Hill7","la":47.61673,"lo":-122.33267,"r":285310,"l":60.6,"y":2015,"e":35.5,"g":431326,"u":"Office","nb":"DOWNTOWN","m":"exact","s":82,"ma":"1099 Stewart St","mn":"Hill 7 Office Bldg","my":"2015","f":11},{"i":50,"a":"2200 6th Ave","n":"Denny Bldg","la":47.61641,"lo":-122.34112,"r":184609,"l":73.3,"y":1967,"e":50.9,"g":190642,"u":"Office","nb":"DOWNTOWN","m":"high","s":89,"ma":"2200 6th Ave","mn":"Denny Building","my":"1968","f":12},{"i":51,"a":"2401 4th Ave","n":"Fourth & Battery","la":47.61619,"lo":-122.34599,"r":234000,"l":49.7,"y":1978,"e":46.8,"g":234000,"u":"Office","nb":"DOWNTOWN","m":"high","s":78,"ma":"2401 4th Ave","mn":"Fourth & Battery Building","my":"1978","f":12},{"i":52,"a":"1100 Olive Way","n":"Met Park West","la":47.61597,"lo":-122.33086,"r":413715,"l":40.7,"y":1980,"e":31.1,"g":413715,"u":"Office","nb":"DOWNTOWN","m":"high","s":86,"ma":"1100 Olive Way","mn":"Metropolitan Park I  (West) Office Bldg","my":"1980","f":18},{"i":53,"a":"2001 8th Ave","n":"West8","la":47.61578,"lo":-122.33726,"r":535395,"l":49.1,"y":2009,"e":22.5,"g":758043,"u":"Office","nb":"DOWNTOWN","m":"exact","s":null,"ma":"2001 8th Ave","mn":"West 8th","my":"2009","f":28},{"i":54,"a":"1000 Olive Way","n":"Washington 1000","la":47.61509,"lo":-122.33178,"r":532496,"l":0.0,"y":2024,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":16},{"i":55,"a":"1800 9th Ave","n":"Axis9","la":47.61516,"lo":-122.33303,"r":313207,"l":0.0,"y":1990,"e":28.3,"g":480840,"u":"Office","nb":"DOWNTOWN","m":"exact","s":98,"ma":"1800 9th Ave","mn":"1800 9th Avenue Building","my":"1990","f":15},{"i":56,"a":"2033 6th Ave","n":"6th & Lenora Building","la":47.61481,"lo":-122.33969,"r":null,"l":null,"y":1963,"e":52.5,"g":169020,"u":"Office","nb":"DOWNTOWN","m":"exact","s":85,"ma":"2033 6th Ave","mn":"Active Voice  Building (Formerly Sixth & Lenora)","my":"1963","f":11},{"i":57,"a":"2801 Alaskan Way","n":"Pier 70","la":47.61472,"lo":-122.35566,"r":null,"l":null,"y":1902,"e":72.2,"g":76893,"u":"Office","nb":"DOWNTOWN","m":"exact","s":44,"ma":"2801 Alaskan Way","mn":"Pier 70","my":"1902","f":3},{"i":58,"a":"1700 7th Ave","n":"1700 Seventh Avenue","la":47.61399,"lo":-122.33523,"r":566479,"l":60.1,"y":2001,"e":33.7,"g":747747,"u":"Office","nb":"DOWNTOWN","m":"high","s":null,"ma":"1700 7th Ave","mn":"1700 Seventh Building","my":"2000","f":23},{"i":59,"a":"2601 Elliott Ave","n":"","la":47.61429,"lo":-122.35263,"r":null,"l":null,"y":1917,"e":13.7,"g":350310,"u":"Office","nb":"DOWNTOWN","m":"exact","s":null,"ma":"2601 Elliott Ave","mn":"2601 Elliott Ave","my":"1916","f":6},{"i":60,"a":"2101-2121 4th Ave","n":"","la":47.61382,"lo":-122.34146,"r":426779,"l":54.2,"y":1980,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":25},{"i":61,"a":"720 Olive Way","n":"8th & Olive","la":47.61418,"lo":-122.33485,"r":304751,"l":65.4,"y":1981,"e":47.4,"g":383515,"u":"Office","nb":"DOWNTOWN","m":"high","s":67,"ma":"720 Olive Way","mn":"720 Olive Bldg","my":"1981","f":20},{"i":62,"a":"600 Stewart St","n":"Plaza 600","la":47.61402,"lo":-122.33712,"r":null,"l":null,"y":1969,"e":61.8,"g":265851,"u":"Office","nb":"DOWNTOWN","m":"exact","s":81,"ma":"600 Stewart St","mn":"Plaza 600 Building","my":"1969","f":20},{"i":63,"a":"1809 7th Ave","n":"Tower Building","la":47.61375,"lo":-122.33566,"r":173770,"l":72.3,"y":1930,"e":44.7,"g":204790,"u":"Office","nb":"DOWNTOWN","m":"high","s":83,"ma":"1809 7th Ave","mn":"Tower Bldg","my":"1930","f":17},{"i":64,"a":"2501 Elliott Ave","n":"","la":47.61336,"lo":-122.35059,"r":109796,"l":72.8,"y":1910,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":4},{"i":65,"a":"2000 3rd Ave","n":"First Light","la":47.61236,"lo":-122.34144,"r":120932,"l":10.5,"y":2024,"e":25.1,"g":25920,"u":"Retail Store","nb":"DOWNTOWN","m":"near","s":72,"ma":"2001 3rd Ave","mn":"Swifty Printing","my":"1919","f":7},{"i":66,"a":"255 Lenora St","n":"3rd & Lenora","la":47.61282,"lo":-122.34252,"r":null,"l":null,"y":2020,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":36},{"i":67,"a":"1601 5th Ave","n":"Westlake Tower","la":47.61192,"lo":-122.33717,"r":null,"l":null,"y":1988,"e":32.1,"g":516342,"u":"Office","nb":"DOWNTOWN","m":"exact","s":84,"ma":"1601 5th Ave","mn":"Westlake Tower","my":"1989","f":25},{"i":68,"a":"1904 3rd Ave","n":"Securities Bldg","la":47.61216,"lo":-122.33951,"r":260010,"l":74.4,"y":1917,"e":35.3,"g":448832,"u":"Office","nb":"DOWNTOWN","m":"exact","s":null,"ma":"1904 3rd Ave","mn":"Securities & Market Building Campus","my":"1913","f":10},{"i":69,"a":"1511 6th Ave","n":"Decatur Bldg","la":47.61166,"lo":-122.33528,"r":92964,"l":43.8,"y":1921,"e":28.0,"g":125084,"u":"Office","nb":"DOWNTOWN","m":"high","s":93,"ma":"1511 6th Ave","mn":"Decatur Building","my":"1921","f":4},{"i":70,"a":"701 Pike St","n":"7th and Pike","la":47.6115,"lo":-122.33278,"r":360000,"l":64.5,"y":2000,"e":35.5,"g":538933,"u":"Office","nb":"DOWNTOWN","m":"exact","s":82,"ma":"701 Pike St","mn":"One Convention Place","my":"2001","f":16},{"i":71,"a":"413 Pine St","n":"5th & Pine","la":47.61121,"lo":-122.33742,"r":165202,"l":39.2,"y":1973,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":6},{"i":72,"a":"520 Pike St","n":"520 Pike","la":47.61125,"lo":-122.33494,"r":396600,"l":66.8,"y":1983,"e":35.0,"g":500000,"u":"Office","nb":"DOWNTOWN","m":"high","s":83,"ma":"520 Pike St","mn":"520 Pike Building","my":"1983","f":29},{"i":73,"a":"2200 Alaskan Way","n":"World Trade Center-West Bldg","la":47.61116,"lo":-122.34748,"r":null,"l":null,"y":1998,"e":39.7,"g":87500,"u":"Office","nb":"DOWNTOWN","m":"exact","s":90,"ma":"2200 Alaskan Way","mn":"Port Of Seattle - World Trade Center-West","my":"1999","f":4},{"i":74,"a":"1505 5th Ave","n":"1505 Fifth","la":47.61103,"lo":-122.33549,"r":90000,"l":71.7,"y":1926,"e":72.4,"g":36504,"u":"Other","nb":"DOWNTOWN","m":"near","s":null,"ma":"1506 5th Ave","mn":"Coliseum Building","my":"1915","f":6},{"i":75,"a":"1420 5th Ave","n":"U.S. Bank Center","la":47.61054,"lo":-122.33466,"r":null,"l":null,"y":1989,"e":33.9,"g":1536606,"u":"Office","nb":"DOWNTOWN","m":"exact","s":87,"ma":"1420 5th Ave","mn":"Us Bank Center","my":"1989","f":44},{"i":76,"a":"101 Stewart St","n":"101 Stewart","la":47.61029,"lo":-122.34089,"r":94333,"l":29.1,"y":1986,"e":34.4,"g":115857,"u":"Office","nb":"DOWNTOWN","m":"high","s":79,"ma":"101 Stewart St","mn":"101 Stewart","my":"1986","f":12},{"i":77,"a":"217 Pine St","n":"Olympic Tower","la":47.6103,"lo":-122.33879,"r":99470,"l":61.9,"y":1929,"e":42.2,"g":99470,"u":"Office","nb":"DOWNTOWN","m":"high","s":79,"ma":"217 Pine St","mn":"Olympic Tower Condominiums","my":"1929","f":12},{"i":78,"a":"1601-1611 2nd Ave","n":"1601 Second","la":47.61029,"lo":-122.33993,"r":114966,"l":0.0,"y":1908,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":10},{"i":79,"a":"1501 4th Ave","n":"Century Square","la":47.61022,"lo":-122.33745,"r":614723,"l":34.3,"y":1986,"e":54.1,"g":755000,"u":"Office","nb":"DOWNTOWN","m":"high","s":77,"ma":"1501 4th Ave","mn":"Century Square","my":"1985","f":30},{"i":80,"a":"425 Pike St","n":"WaFd Bank","la":47.61033,"lo":-122.3357,"r":109830,"l":64.8,"y":1984,"e":41.4,"g":109830,"u":"Office","nb":"DOWNTOWN","m":"high","s":68,"ma":"425 Pike St","mn":"Wafd Bank","my":"1984","f":6},{"i":81,"a":"1424 4th Ave","n":"4Pike","la":47.61005,"lo":-122.3361,"r":132326,"l":20.8,"y":1926,"e":24.0,"g":132326,"u":"Office","nb":"DOWNTOWN","m":"high","s":88,"ma":"1424 4th Ave","mn":"4Pike","my":"1926","f":10},{"i":82,"a":"500 Union St","n":"Logan Bldg","la":47.61003,"lo":-122.33452,"r":null,"l":null,"y":1959,"e":45.6,"g":135918,"u":"Office","nb":"DOWNTOWN","m":"exact","s":84,"ma":"500 Union St","mn":"Logan Building","my":"1958","f":10},{"i":83,"a":"1425 4th Ave","n":"Joshua Green Building","la":47.60991,"lo":-122.33687,"r":94475,"l":63.2,"y":1909,"e":47.3,"g":109266,"u":"Office","nb":"DOWNTOWN","m":"high","s":78,"ma":"1425 4th Ave","mn":"Joshua Green Building","my":"1910","f":10},{"i":84,"a":"600 University St","n":"One Union Square","la":47.60967,"lo":-122.33229,"r":672479,"l":73.0,"y":1980,"e":25.4,"g":794592,"u":"Office","nb":"DOWNTOWN","m":"high","s":94,"ma":"600 University St","mn":"One Union Square","my":"1980","f":36},{"i":85,"a":"1411 4th Ave","n":"1411 Fourth Avenue Building","la":47.60923,"lo":-122.33625,"r":136412,"l":15.5,"y":1929,"e":46.1,"g":151039,"u":"Office","nb":"DOWNTOWN","m":"high","s":73,"ma":"1411 4th Ave","mn":"1411 Building","my":"1929","f":15},{"i":86,"a":"1325 4th Ave","n":"Puget Sound Plaza","la":47.60869,"lo":-122.33588,"r":279586,"l":68.1,"y":1960,"e":68.8,"g":552176,"u":"Office","nb":"DOWNTOWN","m":"exact","s":71,"ma":"1325 4th Ave","mn":"Puget Sound Plaza","my":"1960","f":21},{"i":87,"a":"400 University St","n":"400 University at Rainier Square","la":47.60844,"lo":-122.3347,"r":113302,"l":48.5,"y":2021,"e":22.1,"g":122000,"u":"Office","nb":"DOWNTOWN","m":"high","s":94,"ma":"400 University St","mn":"400 University","my":"2020","f":10},{"i":88,"a":"1200 5th Ave","n":"IBM Building, 1200 5th","la":47.60842,"lo":-122.33305,"r":225000,"l":66.2,"y":1960,"e":58.1,"g":336330,"u":"Office","nb":"DOWNTOWN","m":"exact","s":62,"ma":"1200 5th Ave","mn":"Ibm Building","my":"1964","f":20},{"i":89,"a":"1215 4th Ave","n":"Financial Center","la":47.60765,"lo":-122.3348,"r":361760,"l":45.9,"y":1972,"e":59.2,"g":453106,"u":"Office","nb":"DOWNTOWN","m":"high","s":73,"ma":"1215 4th Ave","mn":"Financial Center","my":"1970","f":28},{"i":90,"a":"1218 3rd Ave","n":"Seattle Tower","la":47.60769,"lo":-122.33544,"r":216201,"l":49.6,"y":1928,"e":49.4,"g":216571,"u":"Office","nb":"DOWNTOWN","m":"high","s":null,"ma":"1218 3rd Ave","mn":"Seattle Tower","my":"1929","f":27},{"i":91,"a":"1201 3rd Ave","n":"Tower 1201","la":47.60723,"lo":-122.33611,"r":1144635,"l":63.3,"y":1988,"e":37.4,"g":1413575,"u":"Office","nb":"DOWNTOWN","m":"high","s":88,"ma":"1201 3rd Ave","mn":"Wash Mutual Tower (1201 Third Ave)","my":"1988","f":55},{"i":92,"a":"1111 3rd Ave","n":"1111 Third Ave Bldg","la":47.60655,"lo":-122.33533,"r":574385,"l":58.3,"y":1980,"e":36.9,"g":776762,"u":"Office","nb":"DOWNTOWN","m":"exact","s":80,"ma":"1111 3rd Ave","mn":"1111 3rd Ave Building","my":"1980","f":34},{"i":93,"a":"1100 2nd Ave","n":"Second & Spring Bldg","la":47.60642,"lo":-122.33581,"r":null,"l":null,"y":1906,"e":236.1,"g":172842,"u":"Office","nb":"DOWNTOWN","m":"exact","s":null,"ma":"1100 2nd Ave","mn":"Second And Spring Building","my":"1958","f":5},{"i":94,"a":"51 University St","n":"","la":47.60604,"lo":-122.33948,"r":113413,"l":58.4,"y":1918,"e":31.1,"g":117182,"u":"Office","nb":"DOWNTOWN","m":"high","s":86,"ma":"51 University St","mn":"51 University (Schwabacher Bldg.)","my":"1918","f":6},{"i":95,"a":"800 5th Ave","n":"800 Fifth","la":47.60573,"lo":-122.33028,"r":934806,"l":58.3,"y":1981,"e":30.0,"g":1249055,"u":"Office","nb":"DOWNTOWN","m":"high","s":85,"ma":"800 5th Ave","mn":"Bank Of America Fifth Avenue Plaza","my":"1981","f":42},{"i":96,"a":"1015 3rd Ave","n":"","la":47.60582,"lo":-122.33464,"r":210336,"l":0.0,"y":1953,"e":42.7,"g":293576,"u":"Office","nb":"DOWNTOWN","m":"exact","s":62,"ma":"1015 3rd Ave","mn":"1015 Third Avenue Bldg - Expeditors International","my":"1998","f":13},{"i":97,"a":"925 4th Ave","n":"Fourth & Madison Bldg","la":47.60549,"lo":-122.33319,"r":null,"l":null,"y":2002,"e":32.7,"g":1052469,"u":"Office","nb":"DOWNTOWN","m":"exact","s":81,"ma":"925 4th Ave","mn":"Fourth & Madison ( Idx Tower)","my":"2002","f":39},{"i":98,"a":"901 5th Ave","n":"","la":47.60616,"lo":-122.33165,"r":541190,"l":54.0,"y":1973,"e":59.3,"g":711611,"u":"Office","nb":"DOWNTOWN","m":"high","s":76,"ma":"901 5th Ave","mn":"901 Fifth Avenue","my":"1973","f":41},{"i":99,"a":"1000 2nd Ave","n":"1000 Second Avenue","la":47.60567,"lo":-122.33511,"r":589921,"l":70.8,"y":1986,"e":33.4,"g":589921,"u":"Office","nb":"DOWNTOWN","m":"high","s":87,"ma":"1000 2nd Ave","mn":"1000 2nd Avenue Building","my":"1986","f":40},{"i":100,"a":"1015 2nd Ave","n":"The Reserve Building","la":47.60542,"lo":-122.33588,"r":215567,"l":39.6,"y":1950,"e":16.1,"g":232045,"u":"Office","nb":"DOWNTOWN","m":"high","s":98,"ma":"1015 2nd Ave","mn":"1015 2nd Avenue Bldg","my":"1950","f":13},{"i":101,"a":"999 3rd Ave","n":"999 Third Bldg","la":47.60505,"lo":-122.33427,"r":989186,"l":54.9,"y":1983,"e":30.1,"g":1323055,"u":"Office","nb":"DOWNTOWN","m":"high","s":86,"ma":"999 3rd Ave","mn":"999 Third Ave","my":"1983","f":47},{"i":102,"a":"701 5th Ave","n":"Columbia Center","la":47.60454,"lo":-122.33072,"r":1600000,"l":64.5,"y":1985,"e":41.7,"g":1952220,"u":"Office","nb":"DOWNTOWN","m":"high","s":90,"ma":"701 5th Ave","mn":"Columbia Center","my":"1985","f":76},{"i":103,"a":"1000-1020 Western Ave","n":"National Bldg","la":47.6043,"lo":-122.33732,"r":132000,"l":33.0,"y":1905,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":6},{"i":104,"a":"810 3rd Ave","n":"Central Building","la":47.60471,"lo":-122.33261,"r":193027,"l":40.1,"y":1907,"e":32.1,"g":201480,"u":"Office","nb":"DOWNTOWN","m":"high","s":79,"ma":"810 3rd Ave","mn":"Central Building","my":"1907","f":8},{"i":105,"a":"875 3rd Ave","n":"The Net","la":47.60468,"lo":-122.33326,"r":null,"l":null,"y":null,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":36},{"i":106,"a":"821 2nd Ave","n":"Exchange Building","la":47.60403,"lo":-122.33497,"r":315374,"l":49.1,"y":1929,"e":24.3,"g":384302,"u":"Office","nb":"DOWNTOWN","m":"high","s":89,"ma":"821 2nd Ave","mn":"Exchange Building","my":"1929","f":23},{"i":107,"a":"720 3rd Ave","n":"Pacific Bldg","la":47.60411,"lo":-122.33225,"r":138545,"l":38.5,"y":1971,"e":30.3,"g":227556,"u":"Office","nb":"DOWNTOWN","m":"exact","s":96,"ma":"720 3rd Ave","mn":"Pacific Building","my":"1970","f":23},{"i":108,"a":"801 2nd Ave","n":"Norton Building","la":47.6037,"lo":-122.33447,"r":331695,"l":72.4,"y":1958,"e":71.6,"g":378525,"u":"Office","nb":"DOWNTOWN","m":"high","s":74,"ma":"801 2nd Ave","mn":"Norton Building","my":"1958","f":17},{"i":109,"a":"801-815 1st Ave","n":"Colman Building","la":47.60329,"lo":-122.33506,"r":null,"l":null,"y":1904,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":6},{"i":110,"a":"710 2nd Ave","n":"Dexter Horton Building","la":47.6036,"lo":-122.33288,"r":335000,"l":64.2,"y":1924,"e":27.9,"g":388934,"u":"Office","nb":"DOWNTOWN","m":"high","s":91,"ma":"710 2nd Ave","mn":"Dexter Horton Building","my":"1922","f":15},{"i":111,"a":"719 2nd Ave","n":"Millennium Tower","la":47.60331,"lo":-122.33389,"r":null,"l":null,"y":2001,"e":44.6,"g":390390,"u":"Office","nb":"DOWNTOWN","m":"exact","s":81,"ma":"719 2nd Ave","mn":"Millennium Tower","my":"2000","f":14},{"i":112,"a":"705 2nd Ave","n":"Hoge Building","la":47.60304,"lo":-122.33362,"r":115294,"l":50.9,"y":1911,"e":41.1,"g":159034,"u":"Office","nb":"DOWNTOWN","m":"exact","s":78,"ma":"705 2nd Ave","mn":"Hoge Building","my":"1911","f":17},{"i":113,"a":"615-619 2nd Ave","n":"Broderick Building","la":47.60241,"lo":-122.33272,"r":78674,"l":56.4,"y":1889,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":7},{"i":114,"a":"61-71 Columbia St","n":"Polson Bldg","la":47.6027,"lo":-122.3362,"r":null,"l":null,"y":1910,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":6},{"i":115,"a":"315 5th Ave S","n":"Fifth & Jackson","la":47.59963,"lo":-122.32796,"r":150000,"l":29.4,"y":2002,"e":27.2,"g":181694,"u":"Office","nb":"DOWNTOWN","m":"high","s":90,"ma":"315 5th Ave S","mn":"5th & Jackson Building","my":"2002","f":10},{"i":116,"a":"308-316 Occidental Ave S","n":"Occidental Mall","la":47.59992,"lo":-122.3328,"r":116443,"l":58.9,"y":1908,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":5},{"i":117,"a":"74 S Jackson St","n":"The Jack","la":47.59951,"lo":-122.33514,"r":154000,"l":6.6,"y":2023,"e":null,"g":167859,"u":"NA","nb":"DOWNTOWN","m":"high","s":null,"ma":"74 S Jackson St","mn":"Uv The Jack","my":"2023","f":8},{"i":118,"a":"101-111 S Jackson St","n":"111 S. Jackson","la":47.59915,"lo":-122.33411,"r":81416,"l":13.3,"y":1904,"e":null,"g":null,"u":"","nb":"","m":"none","s":null,"ma":"","mn":"","my":"","f":5},{"i":119,"a":"419 Occidental Ave S","n":"RailSpur","la":47.59855,"lo":-122.33327,"r":100759,"l":39.1,"y":1906,"e":14.2,"g":99440,"u":"Office","nb":"DOWNTOWN","m":"high","s":99,"ma":"419 Occidental Ave S","mn":"Railspur (Fx Mcrory'S) Building","my":"1906","f":8},{"i":120,"a":"83 S King St","n":"King Street Crossing","la":47.59806,"lo":-122.33475,"r":186637,"l":35.5,"y":1904,"e":26.9,"g":204504,"u":"Office","nb":"DOWNTOWN","m":"high","s":85,"ma":"83 S King St","mn":"83 King Street","my":"1904","f":8},{"i":121,"a":"505 5th Ave S","n":"505 Union Station","la":47.59865,"lo":-122.32854,"r":291860,"l":68.8,"y":2000,"e":56.8,"g":312512,"u":"Office","nb":"DOWNTOWN","m":"high","s":39,"ma":"505 5th Ave S","mn":"505 Union Station","my":"2000","f":11},{"i":122,"a":"505 1st Ave S","n":"505 First - King Street Crossing","la":47.59767,"lo":-122.33467,"r":350000,"l":28.9,"y":2009,"e":51.2,"g":443509,"u":"Office","nb":"DOWNTOWN","m":"high","s":null,"ma":"505 1st Ave S","mn":"505 First Avenue Building","my":"2009","f":7},{"i":123,"a":"605 5th Ave S","n":"605 Union Station","la":47.59705,"lo":-122.32813,"r":275004,"l":42.5,"y":2000,"e":27.8,"g":268130,"u":"Office","nb":"DOWNTOWN","m":"high","s":null,"ma":"605 5th Ave S","mn":"605 Union Station","my":"2000","f":9},{"i":124,"a":"815 Airport Way S","n":"INS Building","la":47.59503,"lo":-122.32704,"r":null,"l":null,"y":1930,"e":43.9,"g":76624,"u":"Office","nb":"GREATER DUWAMISH","m":"exact","s":65,"ma":"815 Airport Way S","mn":"Inscape Arts Building","my":"1930","f":5}];
+/* Building footprints keyed by building #, from OpenStreetMap (© OpenStreetMap contributors, ODbL). p = [[lon,lat],…] outer ring,
+   buffered 2 m outward so photogrammetry bulge and small overhangs still get painted. Matched by point-in-polygon on the listed
+   coordinate, else nearest building within 15 m, else hand-checked by name. */
+const F = {"1":{"p":[[-122.326758,47.654125],[-122.32665,47.654124],[-122.326645,47.654345],[-122.32655,47.654348],[-122.326545,47.654393],[-122.326445,47.654393],[-122.326445,47.654434],[-122.326348,47.654434],[-122.326348,47.654461],[-122.326246,47.654463],[-122.326245,47.654521],[-122.326146,47.654521],[-122.326143,47.654569],[-122.326044,47.654565],[-122.326045,47.654602],[-122.325879,47.654602],[-122.325881,47.653948],[-122.325881,47.653854],[-122.32675,47.653854]],"nm":"Dunn Lumber","osm":"way/238213605"},"2":{"p":[[-122.324215,47.634808],[-122.324536,47.633928],[-122.32501,47.633928],[-122.324832,47.634432],[-122.324845,47.63443],[-122.324862,47.634496],[-122.324842,47.634497],[-122.324843,47.634482],[-122.325094,47.634487],[-122.325136,47.63475],[-122.325109,47.63475],[-122.325116,47.634828]],"osm":"way/217604423"},"3":{"p":[[-122.341007,47.634178],[-122.340825,47.634181],[-122.340537,47.634182],[-122.340544,47.63399],[-122.34056,47.63388],[-122.340573,47.633809],[-122.340614,47.633634],[-122.340671,47.633471],[-122.340716,47.633342],[-122.340823,47.633341],[-122.340824,47.633359],[-122.341007,47.633358],[-122.341003,47.633581],[-122.340984,47.633581],[-122.340984,47.633622],[-122.341001,47.633622]],"nm":"Union Bay Building","lv":5,"osm":"way/114627071"},"4":{"p":[[-122.342174,47.632945],[-122.341196,47.63295],[-122.341194,47.63288],[-122.341194,47.632699],[-122.341219,47.632703],[-122.341191,47.632671],[-122.341242,47.632582],[-122.341206,47.632582],[-122.341132,47.632424],[-122.341313,47.63242],[-122.341313,47.632404],[-122.341493,47.632403],[-122.341492,47.632389],[-122.341681,47.632388],[-122.341681,47.632379],[-122.341842,47.632378],[-122.341842,47.632362],[-122.342163,47.63236],[-122.342167,47.632634],[-122.342148,47.632634],[-122.342148,47.632673],[-122.34217,47.632672]],"nm":"West Lake Union Center","lv":5,"osm":"way/223782831"},"5":{"p":[[-122.327043,47.630392],[-122.327428,47.630578],[-122.327369,47.63064],[-122.327377,47.630646],[-122.32712,47.630888],[-122.327101,47.63088],[-122.327095,47.630886],[-122.327046,47.630922],[-122.327047,47.63092],[-122.327067,47.630932],[-122.326542,47.631309],[-122.326461,47.631256],[-122.326421,47.631231],[-122.326381,47.631247],[-122.32636,47.630983],[-122.326445,47.630908],[-122.326512,47.630909]],"osm":"way/217604412"},"6":{"p":[[-122.327596,47.630492],[-122.327451,47.630425],[-122.327103,47.630262],[-122.327711,47.629724],[-122.327732,47.629735],[-122.3278,47.629668],[-122.328233,47.629868],[-122.328143,47.629956],[-122.327739,47.630352],[-122.327681,47.630408],[-122.327645,47.630443]],"osm":"way/217604406"},"7":{"p":[[-122.341691,47.629526],[-122.341694,47.629117],[-122.341695,47.628772],[-122.341134,47.628771],[-122.341132,47.628881],[-122.341129,47.629525]],"nm":"Meta Westlake","lv":6,"osm":"way/338546128"},"8":{"p":[[-122.342205,47.628581],[-122.342208,47.628343],[-122.342211,47.628113],[-122.342151,47.628113],[-122.342151,47.628095],[-122.34215,47.628058],[-122.341733,47.628062],[-122.341729,47.628708],[-122.341984,47.628702]],"osm":"way/202353909"},"10":{"p":[[-122.343407,47.625837],[-122.3425,47.625837],[-122.342496,47.625484],[-122.343407,47.625483]],"osm":"way/1433915575"},"12":{"p":[[-122.367842,47.625251],[-122.367258,47.625616],[-122.366548,47.625103],[-122.36714,47.624728]],"lv":4,"osm":"way/221921031"},"13":{"p":[[-122.330113,47.62476],[-122.330209,47.624826],[-122.330208,47.624968],[-122.330112,47.625034],[-122.330057,47.625033],[-122.330051,47.625035],[-122.330013,47.625035],[-122.329977,47.625058],[-122.329915,47.625058],[-122.329872,47.625087],[-122.329616,47.625088],[-122.329605,47.625093],[-122.329518,47.625092],[-122.32942,47.625025],[-122.329421,47.624828],[-122.329519,47.624761]],"lv":5,"osm":"way/217604437"},"14":{"p":[[-122.35944,47.62526],[-122.359446,47.62471],[-122.360092,47.624712],[-122.360089,47.624961],[-122.35982,47.62496],[-122.359818,47.625261]],"osm":"way/231753213"},"17":{"p":[[-122.341626,47.623924],[-122.341546,47.623924],[-122.341547,47.623952],[-122.341364,47.623951],[-122.341364,47.623934],[-122.341337,47.623933],[-122.341338,47.623943],[-122.341198,47.623943],[-122.341198,47.623933],[-122.341184,47.623933],[-122.341184,47.623848],[-122.341192,47.623848],[-122.341192,47.623844],[-122.341178,47.623844],[-122.341178,47.623783],[-122.341177,47.623306],[-122.341419,47.623305],[-122.341419,47.623314],[-122.341555,47.623315],[-122.341555,47.623325],[-122.341625,47.623326],[-122.341625,47.623361],[-122.341632,47.623361],[-122.34163,47.62348],[-122.341624,47.62348],[-122.341624,47.623539],[-122.341618,47.623539],[-122.341618,47.623535],[-122.341633,47.623535],[-122.341631,47.623628],[-122.341622,47.623628],[-122.341622,47.623625],[-122.341627,47.623625],[-122.341625,47.623688],[-122.341621,47.623688],[-122.341621,47.62371],[-122.341633,47.62371],[-122.341631,47.623833],[-122.341619,47.623833],[-122.34162,47.623828],[-122.34162,47.623854],[-122.341626,47.623854]],"lv":8,"osm":"way/367577931"},"18":{"p":[[-122.333671,47.624202],[-122.333666,47.623693],[-122.333833,47.623692],[-122.333833,47.623684],[-122.334045,47.623684],[-122.334045,47.623755],[-122.334165,47.623755],[-122.334168,47.624201],[-122.333854,47.624202],[-122.333854,47.62418],[-122.333831,47.62418],[-122.333831,47.624201]],"nm":"Vue Research Center","lv":5,"osm":"way/231658294"},"19":{"p":[[-122.364457,47.622627],[-122.365007,47.623077],[-122.364468,47.623375],[-122.364086,47.623065],[-122.364128,47.623043],[-122.364137,47.623038],[-122.364095,47.623004],[-122.364141,47.622979],[-122.364096,47.622941],[-122.364146,47.622914],[-122.364104,47.622879],[-122.364151,47.622854],[-122.364106,47.622817],[-122.364308,47.622709]],"nm":"F5 Networks","lv":4,"osm":"way/132923920"},"20":{"p":[[-122.355554,47.622618],[-122.356038,47.622621],[-122.356032,47.623037],[-122.356028,47.623199],[-122.355543,47.623195],[-122.355546,47.623035],[-122.355547,47.62299]],"nm":"Queen Anne Post Office","lv":4,"osm":"way/231761547"},"21":{"p":[[-122.338079,47.622612],[-122.338305,47.622611],[-122.33831,47.623139],[-122.337828,47.623141],[-122.337823,47.622663],[-122.33808,47.622662]],"nm":"Amazon.com Gatsby","lv":6,"osm":"way/231658838"},"22":{"p":[[-122.36362,47.622682],[-122.363227,47.622347],[-122.363372,47.622269],[-122.363912,47.622272],[-122.363977,47.622272],[-122.364033,47.622272],[-122.364094,47.622319],[-122.364337,47.622527],[-122.364183,47.622608],[-122.36399,47.622713],[-122.363949,47.622678],[-122.363898,47.622705],[-122.363857,47.62267],[-122.363804,47.622699],[-122.36376,47.622661],[-122.363717,47.622685],[-122.363678,47.622652],[-122.363666,47.622658]],"nm":"F5 Networks","lv":4,"osm":"way/221921021"},"23":{"p":[[-122.358695,47.622988],[-122.358704,47.622234],[-122.358727,47.622194],[-122.358962,47.622194],[-122.359161,47.622193],[-122.359161,47.622204],[-122.359171,47.622204],[-122.359197,47.622215],[-122.359218,47.622228],[-122.359221,47.622234],[-122.359245,47.622234],[-122.359241,47.622561],[-122.359226,47.622561],[-122.359222,47.622572],[-122.359203,47.622592],[-122.359162,47.622609],[-122.35916,47.622609],[-122.359158,47.622619],[-122.359144,47.622618],[-122.359158,47.622789],[-122.359226,47.622791],[-122.359232,47.622895],[-122.359242,47.622897],[-122.359242,47.623163],[-122.359227,47.623163],[-122.359227,47.623165],[-122.359209,47.623186],[-122.359183,47.623201],[-122.359152,47.623209],[-122.359156,47.623209],[-122.359157,47.623217],[-122.358695,47.62322],[-122.358701,47.622988]],"osm":"way/231761581"},"24":{"p":[[-122.338308,47.622639],[-122.338243,47.622639],[-122.338215,47.622639],[-122.337823,47.622641],[-122.337823,47.622599],[-122.337822,47.622504],[-122.33782,47.622284],[-122.33782,47.622249],[-122.337812,47.622249],[-122.337812,47.622176],[-122.337811,47.622158],[-122.337811,47.622114],[-122.338304,47.622112],[-122.338306,47.622447]],"nm":"400 Westlake","lv":15,"osm":"way/231658823"},"25":{"p":[[-122.36315,47.621601],[-122.363548,47.621936],[-122.363429,47.621999],[-122.36284,47.621999],[-122.362543,47.621749],[-122.362817,47.621598],[-122.362966,47.621516],[-122.3631,47.621628]],"nm":"F5 Networks","lv":5,"osm":"way/132924542"},"26":{"p":[[-122.339671,47.621104],[-122.339298,47.621103],[-122.3393,47.620952],[-122.339673,47.620954]],"osm":"way/231663374"},"27":{"p":[[-122.330347,47.621584],[-122.329807,47.621587],[-122.329805,47.621433],[-122.329786,47.621433],[-122.32974,47.621433],[-122.32974,47.621363],[-122.329785,47.621361],[-122.329804,47.621361],[-122.329803,47.621243],[-122.329786,47.621243],[-122.329739,47.621243],[-122.329739,47.621078],[-122.329786,47.621078],[-122.329803,47.621079],[-122.329801,47.62089],[-122.33034,47.620886]],"lv":4,"osm":"way/367575555"},"28":{"p":[[-122.361332,47.621555],[-122.361331,47.621198],[-122.361052,47.621198],[-122.360759,47.621198],[-122.36076,47.621836],[-122.360923,47.621836],[-122.360975,47.621847],[-122.361023,47.621866],[-122.361062,47.621893],[-122.361089,47.621926],[-122.361102,47.621962],[-122.361102,47.622067],[-122.36186,47.622069],[-122.361861,47.621687],[-122.361526,47.621687],[-122.361477,47.621681],[-122.361431,47.621666],[-122.361392,47.621646],[-122.361362,47.621619],[-122.361341,47.621589]],"nm":"Holland America Line","lv":4,"osm":"way/144481465"},"29":{"p":[[-122.338631,47.621646],[-122.338639,47.62095],[-122.339109,47.620951],[-122.339116,47.621647]],"lv":5,"osm":"way/231663378"},"30":{"p":[[-122.342183,47.620993],[-122.342183,47.621327],[-122.341798,47.621328],[-122.341798,47.621162],[-122.341732,47.621162],[-122.341737,47.620965],[-122.342141,47.620966]],"osm":"way/231663366"},"31":{"p":[[-122.36165,47.621066],[-122.361188,47.620676],[-122.361612,47.620445],[-122.361627,47.620458],[-122.361664,47.620437],[-122.362316,47.620942],[-122.362081,47.621071],[-122.362066,47.621059],[-122.362092,47.621045],[-122.362107,47.621054],[-122.362015,47.621101],[-122.361964,47.621061],[-122.361942,47.62105],[-122.36192,47.621045],[-122.361892,47.621041],[-122.361863,47.621041],[-122.36183,47.621049],[-122.361805,47.621059],[-122.36178,47.621073],[-122.361745,47.621083],[-122.361715,47.621087],[-122.361684,47.621086],[-122.361633,47.621063],[-122.36166,47.621045],[-122.361671,47.621055]],"lv":5,"osm":"way/144481646"},"32":{"p":[[-122.344428,47.620209],[-122.344406,47.620209],[-122.344408,47.620085],[-122.344431,47.620085],[-122.344431,47.61982],[-122.34446,47.61982],[-122.34446,47.619798],[-122.344599,47.619798],[-122.344598,47.620075],[-122.344672,47.620075],[-122.344672,47.620088],[-122.344685,47.620088],[-122.344685,47.620208],[-122.344595,47.620208],[-122.344595,47.620314],[-122.344808,47.620314],[-122.344808,47.620339],[-122.344838,47.620339],[-122.344838,47.620464],[-122.344808,47.620464],[-122.344808,47.620487],[-122.344428,47.620487]],"nm":"Travelodge Seattle by the Space Needle","osm":"way/217604426"},"33":{"p":[[-122.346982,47.619815],[-122.346977,47.620172],[-122.347487,47.620173],[-122.347487,47.619816]],"nm":"Aperture On Fifth","lv":6,"osm":"way/436966882"},"35":{"p":[[-122.33105,47.619735],[-122.331052,47.620221],[-122.331052,47.620238],[-122.331052,47.620298],[-122.330929,47.6203],[-122.330929,47.620305],[-122.330929,47.620309],[-122.331053,47.620308],[-122.331058,47.620766],[-122.330529,47.620766],[-122.33053,47.620739],[-122.330522,47.62074],[-122.33052,47.620309],[-122.330635,47.620309],[-122.330634,47.620305],[-122.330635,47.6203],[-122.330517,47.620301],[-122.330514,47.619735],[-122.330959,47.619735]],"nm":"Alley24","lv":6,"osm":"way/231664185"},"36":{"p":[[-122.356108,47.619239],[-122.356637,47.619243],[-122.356628,47.619705],[-122.356099,47.619701]],"lv":5,"osm":"way/231761501"},"37":{"p":[[-122.338683,47.619113],[-122.338681,47.618639],[-122.338978,47.618638],[-122.338978,47.618673],[-122.339036,47.618673],[-122.339038,47.619079],[-122.338979,47.619079],[-122.33898,47.619112]],"lv":1,"osm":"way/231664565"},"38":{"p":[[-122.335996,47.619295],[-122.335999,47.618634],[-122.336035,47.618634],[-122.336035,47.618612],[-122.336673,47.618613],[-122.336673,47.618638],[-122.336814,47.618638],[-122.336813,47.618714],[-122.336712,47.618713],[-122.336711,47.618934],[-122.337067,47.618935],[-122.337065,47.619286],[-122.336604,47.619285],[-122.336604,47.619296]],"nm":"The Seattle Times","lv":8,"osm":"way/231664575"},"39":{"p":[[-122.33752,47.617858],[-122.337278,47.617714],[-122.337262,47.617726],[-122.337124,47.617644],[-122.337143,47.617629],[-122.337054,47.617576],[-122.337075,47.617559],[-122.337052,47.617545],[-122.337119,47.617497],[-122.337015,47.617437],[-122.337152,47.617332],[-122.337339,47.617446],[-122.337345,47.617441],[-122.337426,47.617488],[-122.337432,47.617483],[-122.337834,47.617716],[-122.337797,47.617742],[-122.337821,47.617758],[-122.337715,47.61784],[-122.337664,47.617809],[-122.337611,47.617852],[-122.337566,47.617824]],"nm":"AZUR Tower","lv":12,"osm":"way/390512473"},"40":{"p":[[-122.351665,47.617773],[-122.352669,47.618355],[-122.352583,47.618503],[-122.351513,47.618502],[-122.351422,47.618449],[-122.351349,47.618446],[-122.351038,47.618265]],"lv":6,"osm":"way/223915543"},"41":{"p":[[-122.358578,47.618067],[-122.358563,47.618076],[-122.358612,47.618115],[-122.358622,47.618106],[-122.35901,47.618389],[-122.358801,47.618519],[-122.358769,47.618496],[-122.358478,47.618501],[-122.358289,47.618363],[-122.358335,47.618327],[-122.358257,47.61827],[-122.358216,47.618295],[-122.357336,47.617647],[-122.357116,47.617487],[-122.357198,47.617437],[-122.357274,47.61745],[-122.357357,47.617453],[-122.357459,47.617442],[-122.357503,47.617428],[-122.357546,47.617414],[-122.357561,47.617404],[-122.357625,47.617367]],"lv":5,"osm":"way/223783260"},"42":{"p":[[-122.356477,47.617989],[-122.356445,47.617964],[-122.356411,47.617919],[-122.356395,47.617889],[-122.356386,47.617861],[-122.356384,47.617821],[-122.356386,47.617808],[-122.356388,47.617801],[-122.356399,47.617764],[-122.356415,47.617744],[-122.356424,47.617732],[-122.35644,47.617711],[-122.356452,47.617701],[-122.356358,47.617645],[-122.356411,47.617609],[-122.356472,47.617568],[-122.356478,47.617563],[-122.356527,47.617544],[-122.356619,47.617519],[-122.356705,47.617519],[-122.35675,47.617523],[-122.356812,47.61754],[-122.356886,47.617572],[-122.356941,47.617616],[-122.356974,47.617655],[-122.356999,47.61772],[-122.356999,47.617747],[-122.356992,47.617789],[-122.356966,47.61784],[-122.356938,47.617871],[-122.35703,47.617927],[-122.35691,47.618014],[-122.356864,47.618034],[-122.356822,47.618046],[-122.356704,47.618056],[-122.356663,47.618052],[-122.356581,47.618036],[-122.356559,47.618028],[-122.356543,47.618024]],"nm":"CTI Biopharma","lv":7,"osm":"way/223783259"},"43":{"p":[[-122.333475,47.617485],[-122.333871,47.617724],[-122.33353,47.617989],[-122.333128,47.617754]],"osm":"way/223929031"},"44":{"p":[[-122.330442,47.617366],[-122.33088,47.617623],[-122.330924,47.61765],[-122.330974,47.617679],[-122.331021,47.617706],[-122.331063,47.617731],[-122.331335,47.617891],[-122.331052,47.61811],[-122.331032,47.618121],[-122.331008,47.618129],[-122.330982,47.618133],[-122.330954,47.618133],[-122.330928,47.618128],[-122.330905,47.618119],[-122.330888,47.618109],[-122.330605,47.617941],[-122.330557,47.617913],[-122.330509,47.617885],[-122.330463,47.617858],[-122.330422,47.617834],[-122.329868,47.617508],[-122.330115,47.617319],[-122.330141,47.617334],[-122.330148,47.617329],[-122.330112,47.617308],[-122.33019,47.617248]],"nm":"Metropolitan Park: North Tower","lv":6,"osm":"way/223937033"},"46":{"p":[[-122.347781,47.617497],[-122.34777,47.617483],[-122.347765,47.617467],[-122.347767,47.61745],[-122.347783,47.61743],[-122.347788,47.617426],[-122.347754,47.617406],[-122.347747,47.617411],[-122.347715,47.617415],[-122.347684,47.617408],[-122.347463,47.617277],[-122.347455,47.617264],[-122.347457,47.61724],[-122.347471,47.617222],[-122.347692,47.617054],[-122.347718,47.61705],[-122.347747,47.617051],[-122.347777,47.617065],[-122.347971,47.617181],[-122.347985,47.617199],[-122.347987,47.617214],[-122.347979,47.617232],[-122.347982,47.61723],[-122.34829,47.617412],[-122.348305,47.617429],[-122.348308,47.617448],[-122.348305,47.617463],[-122.348288,47.617481],[-122.348099,47.617626],[-122.348076,47.617636],[-122.348055,47.617639],[-122.348031,47.617637],[-122.348008,47.617628]],"nm":"Fourth and Vine Building","lv":9,"osm":"way/223916473"},"47":{"p":[[-122.351987,47.6172],[-122.351712,47.617411],[-122.351684,47.617433],[-122.351635,47.617434],[-122.351438,47.61732],[-122.351342,47.617263],[-122.351342,47.617232],[-122.351338,47.617235],[-122.351301,47.617214],[-122.35126,47.617214],[-122.351166,47.617158],[-122.351167,47.617162],[-122.351159,47.617162],[-122.351074,47.617112],[-122.351076,47.617113],[-122.351075,47.617114],[-122.350988,47.617062],[-122.350988,47.617057],[-122.350986,47.617057],[-122.350895,47.617003],[-122.350895,47.616975],[-122.351186,47.616751],[-122.351233,47.616746],[-122.351461,47.616883],[-122.351804,47.617086]],"nm":"Bay Vista Tower","lv":5,"osm":"way/223915545"},"48":{"p":[[-122.329923,47.61685],[-122.329963,47.61688],[-122.329984,47.616902],[-122.329997,47.616929],[-122.329998,47.616956],[-122.329991,47.616983],[-122.329973,47.617007],[-122.329948,47.617028],[-122.329915,47.617044],[-122.329893,47.61705],[-122.329802,47.617313],[-122.329792,47.617329],[-122.329774,47.617345],[-122.329747,47.617355],[-122.329717,47.617358],[-122.329688,47.617355],[-122.329661,47.617345],[-122.329644,47.617331],[-122.329601,47.617285],[-122.329548,47.617227],[-122.329425,47.617093],[-122.329415,47.617081],[-122.32941,47.617066],[-122.329408,47.617051],[-122.329412,47.617036],[-122.329558,47.616622],[-122.329568,47.616608],[-122.329584,47.616597],[-122.329605,47.616588],[-122.32963,47.616585],[-122.329654,47.616586],[-122.329676,47.616592],[-122.329696,47.616601],[-122.329715,47.616623],[-122.329722,47.61663],[-122.329881,47.616563],[-122.329919,47.616567],[-122.32994,47.616583],[-122.329943,47.616604],[-122.329883,47.616807]],"nm":"Metropolitan Park: East Tower","osm":"way/164659864"},"49":{"p":[[-122.331959,47.616393],[-122.3323,47.616118],[-122.332436,47.616198],[-122.333042,47.616556],[-122.332865,47.616693],[-122.33269,47.616829],[-122.332064,47.616456]],"nm":"Hill7","lv":11,"osm":"way/223937042"},"50":{"p":[[-122.341405,47.616718],[-122.340631,47.616261],[-122.340833,47.616105],[-122.341221,47.616333],[-122.341609,47.616562]],"nm":"Denny Building","lv":12,"osm":"way/432313068"},"51":{"p":[[-122.34561,47.615953],[-122.345643,47.615952],[-122.345691,47.61591],[-122.345698,47.615904],[-122.345718,47.615899],[-122.345735,47.615896],[-122.345755,47.615896],[-122.345787,47.615904],[-122.345801,47.615915],[-122.345853,47.615945],[-122.345892,47.615944],[-122.345961,47.615986],[-122.345965,47.616016],[-122.34625,47.616183],[-122.346289,47.616182],[-122.346365,47.616225],[-122.346383,47.616411],[-122.346317,47.616464],[-122.346039,47.616474],[-122.345967,47.616431],[-122.345962,47.616385],[-122.345706,47.616232],[-122.345637,47.616236],[-122.345561,47.61619],[-122.345543,47.616006]],"nm":"Fourth and Battery Building","lv":12,"osm":"way/223920796"},"52":{"p":[[-122.330279,47.615786],[-122.330341,47.615757],[-122.33034,47.615754],[-122.330345,47.615731],[-122.33036,47.615719],[-122.330445,47.615681],[-122.33045,47.615688],[-122.330462,47.615682],[-122.33046,47.615664],[-122.330471,47.615647],[-122.330631,47.615578],[-122.330661,47.615572],[-122.330694,47.615572],[-122.330721,47.615578],[-122.331062,47.615953],[-122.331243,47.616153],[-122.331246,47.6162],[-122.331092,47.616318],[-122.330898,47.61646],[-122.330878,47.616441]],"lv":2,"osm":"way/223937032"},"53":{"p":[[-122.337793,47.615852],[-122.337802,47.61586],[-122.337808,47.615869],[-122.33781,47.615877],[-122.337898,47.616315],[-122.337839,47.616356],[-122.337623,47.616227],[-122.337627,47.616223],[-122.337359,47.616064],[-122.337301,47.616036],[-122.337244,47.616006],[-122.337187,47.615975],[-122.33713,47.615943],[-122.337077,47.615909],[-122.337024,47.615875],[-122.336973,47.615839],[-122.336907,47.615791],[-122.336909,47.61579],[-122.336804,47.615728],[-122.336832,47.615706],[-122.336803,47.615689],[-122.337118,47.61545],[-122.33762,47.615749]],"nm":"West 8th","osm":"way/185400434"},"54":{"p":[[-122.33212,47.615522],[-122.331975,47.615438],[-122.332052,47.615389],[-122.332003,47.615336],[-122.331991,47.615342],[-122.331792,47.615116],[-122.331644,47.615166],[-122.331591,47.615204],[-122.331436,47.615263],[-122.331442,47.615272],[-122.330937,47.615484],[-122.33128,47.615878],[-122.331518,47.616007]],"nm":"Washington 1000","lv":16,"osm":"way/1271656387"},"55":{"p":[[-122.333575,47.61567],[-122.333303,47.615509],[-122.333292,47.615516],[-122.332888,47.615275],[-122.3329,47.615267],[-122.332872,47.61525],[-122.332905,47.615222],[-122.332841,47.615184],[-122.333091,47.614992],[-122.333134,47.614961],[-122.333223,47.615014],[-122.333239,47.615],[-122.333644,47.615242],[-122.333639,47.615246],[-122.333792,47.615336],[-122.333754,47.615365],[-122.333801,47.615392],[-122.333877,47.61544]],"nm":"1800 Ninth","lv":16,"osm":"way/223937051"},"56":{"p":[[-122.338938,47.614525],[-122.339136,47.614368],[-122.339773,47.614747],[-122.339905,47.614825],[-122.339703,47.614981],[-122.33932,47.614753],[-122.339107,47.614626]],"nm":"Industrious Building","lv":11,"osm":"way/360585007"},"57":{"p":[[-122.354499,47.61454],[-122.355024,47.614859],[-122.355164,47.61486],[-122.355234,47.614912],[-122.355562,47.614911],[-122.355572,47.614919],[-122.355612,47.614946],[-122.355665,47.614914],[-122.356443,47.614915],[-122.356507,47.614962],[-122.35657,47.614914],[-122.356848,47.614915],[-122.357111,47.614907],[-122.356622,47.614602],[-122.356521,47.614542],[-122.355828,47.614538],[-122.355779,47.614504],[-122.355724,47.614538],[-122.355261,47.614535],[-122.355208,47.614495],[-122.355159,47.614535],[-122.354873,47.614533],[-122.354579,47.614532]],"nm":"Pier 70","osm":"way/166911084"},"58":{"p":[[-122.335083,47.61373],[-122.335094,47.613725],[-122.335108,47.613719],[-122.335126,47.613715],[-122.335142,47.613714],[-122.33516,47.613714],[-122.335177,47.613717],[-122.335193,47.613721],[-122.335208,47.613727],[-122.33522,47.613734],[-122.335231,47.613743],[-122.335237,47.61375],[-122.335845,47.614184],[-122.335992,47.614289],[-122.335653,47.614538],[-122.33548,47.614415],[-122.335176,47.614197],[-122.335127,47.614162],[-122.33475,47.613891],[-122.334817,47.613856],[-122.334814,47.613844]],"osm":"way/223937034"},"59":{"p":[[-122.351986,47.613683],[-122.353614,47.614647],[-122.353258,47.61492],[-122.352717,47.614601],[-122.351557,47.61391],[-122.35185,47.613686]],"lv":5,"osm":"way/223917716"},"60":{"p":[[-122.342983,47.614225],[-122.342472,47.614358],[-122.342216,47.614207],[-122.342284,47.614155],[-122.342138,47.614069],[-122.342082,47.614083],[-122.341831,47.613926],[-122.342282,47.613805],[-122.34252,47.613945],[-122.342559,47.613968]],"nm":"Fourth and Blanchard Building","osm":"way/223927905"},"61":{"p":[[-122.334729,47.613926],[-122.334788,47.613969],[-122.334799,47.613969],[-122.334829,47.61399],[-122.334829,47.613999],[-122.334838,47.614006],[-122.334848,47.614005],[-122.334882,47.61403],[-122.334881,47.614037],[-122.334941,47.614082],[-122.334954,47.614081],[-122.334985,47.614105],[-122.334984,47.614113],[-122.334993,47.61412],[-122.335007,47.61412],[-122.335035,47.614142],[-122.335034,47.61415],[-122.335089,47.61419],[-122.335292,47.614339],[-122.334963,47.614594],[-122.334925,47.614568],[-122.334912,47.614568],[-122.33487,47.614536],[-122.334871,47.614528],[-122.334879,47.614534],[-122.334869,47.614535],[-122.33482,47.614501],[-122.334822,47.614492],[-122.334826,47.614495],[-122.334812,47.614496],[-122.334766,47.614461],[-122.334768,47.614453],[-122.334721,47.614418],[-122.33467,47.614382],[-122.334658,47.614383],[-122.334626,47.614359],[-122.334627,47.614351],[-122.334619,47.614345],[-122.334608,47.614347],[-122.33456,47.614313],[-122.334562,47.614304],[-122.334512,47.614267],[-122.334497,47.614266],[-122.334456,47.614237],[-122.334458,47.614228],[-122.334462,47.614232],[-122.334451,47.614233],[-122.334399,47.614197],[-122.334404,47.614189],[-122.334358,47.614156],[-122.33436,47.614124],[-122.334408,47.614093],[-122.334408,47.614087],[-122.334455,47.614058],[-122.334465,47.614057],[-122.334577,47.613986],[-122.334578,47.613979],[-122.334619,47.613952],[-122.334634,47.613952],[-122.334679,47.613922]],"nm":"8th + Olive","osm":"way/223937043"},"62":{"p":[[-122.337229,47.614241],[-122.337163,47.614293],[-122.337065,47.614237],[-122.337133,47.614183],[-122.337119,47.614194],[-122.336741,47.613974],[-122.336967,47.613798],[-122.33708,47.613866],[-122.337157,47.613808],[-122.337402,47.613952],[-122.337323,47.614013],[-122.337437,47.61408],[-122.337233,47.614238]],"nm":"Plaza 600","lv":20,"osm":"way/223929018"},"63":{"p":[[-122.335813,47.613939],[-122.335384,47.613636],[-122.335393,47.613588],[-122.335798,47.613419],[-122.335922,47.613505],[-122.3359,47.61352],[-122.336134,47.613692]],"nm":"The Tower Building","lv":17,"h":105.7,"osm":"way/223937046"},"64":{"p":[[-122.351303,47.613274],[-122.350949,47.613548],[-122.350628,47.613361],[-122.350982,47.613087]],"nm":"The Seattle School of Theology and Psychology","lv":3,"osm":"way/397007181"},"65":{"p":[[-122.341409,47.612122],[-122.34182,47.612361],[-122.341494,47.612611],[-122.341092,47.612369]],"lv":2,"osm":"way/223928486"},"66":{"p":[[-122.342431,47.612898],[-122.34255,47.612806],[-122.342413,47.612726],[-122.341961,47.612458],[-122.341756,47.612615],[-122.341673,47.612678],[-122.341645,47.612701],[-122.341992,47.612907],[-122.342233,47.613049]],"nm":"The Modern","osm":"way/613645323"},"67":{"p":[[-122.337908,47.611751],[-122.337915,47.611748],[-122.33807,47.61192],[-122.337692,47.612073],[-122.337788,47.612183],[-122.337913,47.61232],[-122.337847,47.612347],[-122.337797,47.612368],[-122.337746,47.61239],[-122.337745,47.612406],[-122.337565,47.612502],[-122.337387,47.61251],[-122.337156,47.612262],[-122.337109,47.61221],[-122.336839,47.611916],[-122.336816,47.611892],[-122.336684,47.611747],[-122.336807,47.611693],[-122.337208,47.61167],[-122.337724,47.611636],[-122.337791,47.611608]],"nm":"Westlake Center","lv":4,"osm":"way/36869314"},"68":{"p":[[-122.339773,47.611866],[-122.339945,47.611973],[-122.339287,47.612483],[-122.339109,47.612381],[-122.338923,47.612266],[-122.339585,47.611754]],"nm":"Securities Building","lv":3,"osm":"way/223929036"},"69":{"p":[[-122.335746,47.611707],[-122.335283,47.611903],[-122.334952,47.611549],[-122.335424,47.611353]],"nm":"Decatur Building","lv":4,"h":23.5,"osm":"way/363046831"},"70":{"p":[[-122.330213,47.612023],[-122.330213,47.612147],[-122.33014,47.612472],[-122.330363,47.612719],[-122.330788,47.612541],[-122.331063,47.612426],[-122.33115,47.612389],[-122.331218,47.612361],[-122.331314,47.612321],[-122.331334,47.612313],[-122.331652,47.612179],[-122.332092,47.611996],[-122.332177,47.61196],[-122.332251,47.611929],[-122.332444,47.611848],[-122.333121,47.611565],[-122.333174,47.611543],[-122.33308,47.61144],[-122.332812,47.61115],[-122.332394,47.611323],[-122.332028,47.610904],[-122.331986,47.610922],[-122.331855,47.610977],[-122.331846,47.610968],[-122.33184,47.610962],[-122.331715,47.610825],[-122.331452,47.610935],[-122.331471,47.610956],[-122.331435,47.610971],[-122.331525,47.611069],[-122.331456,47.611098],[-122.331476,47.61112],[-122.331437,47.611137],[-122.331281,47.611201],[-122.33126,47.611179],[-122.331196,47.611206],[-122.331151,47.611158],[-122.331115,47.611174],[-122.331097,47.611153],[-122.331028,47.611182],[-122.33098,47.611131],[-122.330913,47.61116],[-122.330871,47.611114],[-122.330577,47.611237],[-122.330599,47.611261],[-122.330528,47.61129],[-122.330551,47.611315],[-122.330516,47.611329],[-122.330537,47.611352],[-122.330502,47.611366],[-122.330522,47.611388],[-122.330487,47.611404],[-122.33051,47.611427],[-122.33044,47.611456],[-122.33046,47.611478],[-122.330427,47.611492],[-122.330515,47.611588],[-122.330445,47.611617],[-122.330499,47.611677],[-122.33043,47.611706],[-122.330508,47.61179],[-122.330403,47.611834],[-122.330455,47.611891],[-122.330369,47.611927],[-122.33039,47.611949]],"nm":"Seattle Convention Center Arch","lv":6,"osm":"way/13866261"},"71":{"p":[[-122.336238,47.611267],[-122.336503,47.611555],[-122.336881,47.611399],[-122.336828,47.611146],[-122.336753,47.611121],[-122.33674,47.611111],[-122.33669,47.611078]],"nm":"5th & Pine Building","lv":5,"h":18.5,"osm":"way/363046826"},"72":{"p":[[-122.335452,47.611384],[-122.33498,47.61158],[-122.334628,47.611192],[-122.335102,47.610996]],"nm":"520 Pike Tower","lv":29,"h":106.0,"osm":"way/363046830"},"73":{"p":[[-122.348136,47.611483],[-122.347249,47.611255],[-122.347301,47.611164],[-122.347249,47.611134],[-122.347466,47.610972],[-122.347517,47.611002],[-122.347533,47.610996],[-122.347559,47.610993],[-122.347577,47.610992],[-122.347617,47.610998],[-122.347637,47.611006],[-122.348265,47.611375]],"nm":"World Trade Center West","lv":4,"osm":"way/223926935"},"74":{"p":[[-122.335674,47.611157],[-122.335526,47.61122],[-122.335411,47.61127],[-122.335348,47.611203],[-122.335311,47.611219],[-122.335099,47.610993],[-122.335484,47.61083],[-122.335494,47.610841],[-122.335506,47.610836],[-122.33553,47.610862],[-122.335546,47.61087],[-122.335548,47.61087],[-122.335602,47.610847],[-122.335613,47.610859],[-122.33563,47.610851],[-122.335707,47.610933],[-122.335658,47.610954],[-122.335798,47.611106]],"nm":"Coliseum Theater Building","lv":3,"h":11.1,"osm":"way/363046829"},"75":{"p":[[-122.334982,47.610209],[-122.334987,47.610209],[-122.335015,47.610222],[-122.335037,47.61024],[-122.33505,47.61026],[-122.335055,47.610283],[-122.335055,47.610285],[-122.335027,47.610282],[-122.335056,47.610268],[-122.33508,47.610294],[-122.335232,47.610457],[-122.335321,47.610554],[-122.33533,47.610564],[-122.335341,47.610583],[-122.335346,47.610601],[-122.335343,47.610624],[-122.335331,47.610648],[-122.335314,47.610663],[-122.335291,47.610677],[-122.33519,47.61072],[-122.335156,47.610734],[-122.335098,47.610758],[-122.334724,47.610915],[-122.334588,47.610972],[-122.334556,47.610979],[-122.33452,47.610982],[-122.334489,47.610978],[-122.334461,47.610971],[-122.334434,47.610958],[-122.334413,47.610938],[-122.334306,47.610823],[-122.334023,47.610515],[-122.333763,47.610233],[-122.333779,47.610197],[-122.333784,47.610183],[-122.333769,47.610168],[-122.334137,47.610013],[-122.334388,47.610286],[-122.334883,47.610079],[-122.334983,47.610187],[-122.335007,47.610216],[-122.334976,47.610227]],"nm":"U.S. Bank Centre","lv":3,"osm":"way/397021768"},"76":{"p":[[-122.340591,47.610285],[-122.340873,47.610167],[-122.340985,47.610118],[-122.341044,47.610133],[-122.341138,47.610239],[-122.34113,47.610275],[-122.34105,47.610344],[-122.341043,47.610371],[-122.340998,47.610402],[-122.340998,47.610427],[-122.340892,47.610512],[-122.340793,47.610505]],"nm":"First & Stewart Building","lv":12,"osm":"way/231360589"},"77":{"p":[[-122.338906,47.610141],[-122.339032,47.610278],[-122.339174,47.610433],[-122.33885,47.610568],[-122.338759,47.610606],[-122.338491,47.610313],[-122.338632,47.610255],[-122.338822,47.610176]],"nm":"Olympic Tower","lv":3,"osm":"way/232079590"},"78":{"p":[[-122.340068,47.610284],[-122.340429,47.61013],[-122.340635,47.610352],[-122.340699,47.610422],[-122.340456,47.610523],[-122.34028,47.610598],[-122.340045,47.610346]],"nm":"Broadacres Building","lv":9,"h":37.8,"osm":"way/360947360"},"79":{"p":[[-122.338132,47.61032],[-122.337738,47.610483],[-122.337673,47.61051],[-122.337284,47.610673],[-122.337107,47.610479],[-122.337052,47.610418],[-122.337043,47.610408],[-122.336904,47.610257],[-122.336876,47.610226],[-122.337036,47.61016],[-122.337371,47.61002],[-122.337722,47.609873],[-122.337752,47.609904],[-122.337891,47.610057],[-122.3379,47.610067],[-122.337997,47.610172]],"nm":"Century Square","osm":"way/363046817"},"80":{"p":[[-122.336052,47.610361],[-122.335652,47.610525],[-122.335624,47.610528],[-122.335602,47.610527],[-122.335576,47.610521],[-122.335554,47.610509],[-122.335331,47.61026],[-122.335462,47.610207],[-122.335789,47.610072]],"nm":"Washington Federal Building","lv":6,"h":22.2,"osm":"way/232078063"},"81":{"p":[[-122.336065,47.610366],[-122.335945,47.610232],[-122.3359,47.610184],[-122.335862,47.610142],[-122.335803,47.610075],[-122.335862,47.61005],[-122.336096,47.609953],[-122.336232,47.609896],[-122.336293,47.609964],[-122.336498,47.610188]],"nm":"Fourth and Pike Building","h":45.4,"osm":"way/363036786"},"82":{"p":[[-122.334181,47.60999],[-122.334639,47.609799],[-122.334878,47.61006],[-122.33442,47.61025]],"nm":"Logan Building","lv":10,"h":36.4,"osm":"way/232078059"},"83":{"p":[[-122.336907,47.609611],[-122.337187,47.609919],[-122.336751,47.610098],[-122.336474,47.60979]],"nm":"Joshua Green Building","lv":10,"h":37.0,"osm":"way/363036785"},"84":{"p":[[-122.332547,47.609763],[-122.332527,47.609811],[-122.332086,47.609998],[-122.332016,47.609988],[-122.331738,47.609686],[-122.331756,47.609639],[-122.332203,47.609451],[-122.332269,47.609462],[-122.33228,47.609473]],"nm":"One Union Square","lv":36,"h":139.0,"osm":"way/331281879"},"85":{"p":[[-122.336683,47.609367],[-122.336251,47.609547],[-122.335976,47.609248],[-122.336408,47.609067]],"nm":"1411 Fourth Avenue","lv":15,"h":55.5,"osm":"way/363036782"},"86":{"p":[[-122.335838,47.608845],[-122.335884,47.608826],[-122.336049,47.609002],[-122.336168,47.608951],[-122.336289,47.608901],[-122.335758,47.60833],[-122.335532,47.608426],[-122.335498,47.608441],[-122.335304,47.608522],[-122.335538,47.608768],[-122.335602,47.60874],[-122.335702,47.608698],[-122.335703,47.608699],[-122.335581,47.608751],[-122.335634,47.60881],[-122.335688,47.608867],[-122.335811,47.608815]],"nm":"Puget Sound Plaza","osm":"way/223171640"},"87":{"p":[[-122.33559,47.609213],[-122.33532,47.608916],[-122.335288,47.60888],[-122.335275,47.608865],[-122.335198,47.60878],[-122.334869,47.608416],[-122.33481,47.608352],[-122.334397,47.608522],[-122.334729,47.608889],[-122.33424,47.609091],[-122.334372,47.609236],[-122.334688,47.609585],[-122.33474,47.609563],[-122.334774,47.609549],[-122.334806,47.609535],[-122.334836,47.609524],[-122.334906,47.609494],[-122.335062,47.609431],[-122.335087,47.60942],[-122.33511,47.60941],[-122.335129,47.609403],[-122.335153,47.609394],[-122.335432,47.609278]],"nm":"Rainier Square","h":259.0,"osm":"way/686348108"},"88":{"p":[[-122.333344,47.60876],[-122.333265,47.608792],[-122.33325,47.608799],[-122.333209,47.608815],[-122.333075,47.608671],[-122.333061,47.608676],[-122.333035,47.608687],[-122.333001,47.608702],[-122.332881,47.608574],[-122.332886,47.608571],[-122.332641,47.608304],[-122.333086,47.608118],[-122.333324,47.608382],[-122.333327,47.60838],[-122.33343,47.608487],[-122.33338,47.608507],[-122.333251,47.608562],[-122.333186,47.60859],[-122.333239,47.608646],[-122.333259,47.608669],[-122.333283,47.608694]],"nm":"1200 Fifth","osm":"way/107124282"},"89":{"p":[[-122.33472,47.607879],[-122.334402,47.607529],[-122.334826,47.607354],[-122.335144,47.607704]],"nm":"Financial Center","lv":28,"osm":"way/232079587"},"90":{"p":[[-122.335524,47.607447],[-122.335805,47.607755],[-122.335558,47.607857],[-122.33539,47.607928],[-122.335302,47.60783],[-122.335198,47.607717],[-122.335109,47.60762],[-122.335277,47.60755]],"nm":"Seattle Tower","lv":5,"osm":"way/335417547"},"91":{"p":[[-122.336815,47.607191],[-122.336911,47.607296],[-122.336057,47.607654],[-122.335948,47.607536],[-122.335577,47.607135],[-122.335563,47.60712],[-122.335518,47.60707],[-122.335755,47.606971],[-122.336356,47.606718],[-122.336464,47.606836],[-122.336331,47.606892],[-122.336665,47.607254]],"nm":"1201 Third Avenue","lv":4,"h":12.0,"osm":"way/140436171"},"92":{"p":[[-122.335008,47.606502],[-122.335032,47.606496],[-122.335026,47.606519],[-122.335012,47.606513],[-122.335029,47.606488],[-122.335419,47.606331],[-122.335428,47.606347],[-122.335397,47.60634],[-122.335413,47.606329],[-122.335667,47.606592],[-122.3358,47.606753],[-122.335775,47.606758],[-122.335785,47.606732],[-122.335799,47.606733],[-122.33579,47.606761],[-122.335391,47.606921],[-122.335382,47.606905],[-122.335415,47.606908],[-122.335413,47.606913],[-122.335372,47.606913],[-122.335278,47.606811]],"nm":"1111 Third Avenue","lv":34,"h":138.0,"osm":"way/232080287"},"93":{"p":[[-122.336247,47.606581],[-122.335928,47.606714],[-122.335828,47.606756],[-122.335669,47.606584],[-122.335552,47.606454],[-122.335965,47.606275],[-122.336052,47.606368]],"nm":"Security Pacific Building","lv":5,"osm":"way/357562885"},"94":{"p":[[-122.339058,47.605959],[-122.339338,47.606268],[-122.339846,47.606059],[-122.339564,47.605748],[-122.339388,47.605823],[-122.339244,47.605882]],"lv":15,"h":22.2,"osm":"way/363197081"},"95":{"p":[[-122.329992,47.605997],[-122.329916,47.606028],[-122.32954,47.605609],[-122.330026,47.605411],[-122.330378,47.605266],[-122.330439,47.605334],[-122.330475,47.605319],[-122.33062,47.605481],[-122.33068,47.605548],[-122.330664,47.605555],[-122.330672,47.605563],[-122.33087,47.605783],[-122.330767,47.605825],[-122.330823,47.605887],[-122.330506,47.606017],[-122.330452,47.605958],[-122.33009,47.606106]],"nm":"800 Fifth Avenue","osm":"way/331322653"},"96":{"p":[[-122.33421,47.605645],[-122.334621,47.605475],[-122.335108,47.606012],[-122.335044,47.606039],[-122.335051,47.606048],[-122.334962,47.606084],[-122.33472,47.606183],[-122.334713,47.606177],[-122.334698,47.606183],[-122.334481,47.605943],[-122.334257,47.605696]],"lv":13,"osm":"way/232080841"},"97":{"p":[[-122.332919,47.605912],[-122.332808,47.60579],[-122.332716,47.605689],[-122.332771,47.605666],[-122.332753,47.605647],[-122.332851,47.605606],[-122.332888,47.605573],[-122.332926,47.60555],[-122.333006,47.605509],[-122.333061,47.605482],[-122.333096,47.605466],[-122.3331,47.605464],[-122.332873,47.6052],[-122.332956,47.605166],[-122.333083,47.605113],[-122.3333,47.605022],[-122.333608,47.605359],[-122.333561,47.605378],[-122.333655,47.605479],[-122.333738,47.60557],[-122.333683,47.605593],[-122.333706,47.605618],[-122.333341,47.60577],[-122.332991,47.605914],[-122.33297,47.605891]],"nm":"Fourth and Madison Building","osm":"way/232080843"},"98":{"p":[[-122.332689,47.606105],[-122.332422,47.605811],[-122.331561,47.606146],[-122.331707,47.606311],[-122.33174,47.606348],[-122.33176,47.606369],[-122.33178,47.606391],[-122.331838,47.606457],[-122.331875,47.60644]],"nm":"5th and Madison Condos","lv":24,"h":83.0,"osm":"way/357335123"},"99":{"p":[[-122.334645,47.605482],[-122.335047,47.605306],[-122.335584,47.605867],[-122.335181,47.606042]],"nm":"1000 Second Avenue","lv":2,"osm":"way/232080836"},"100":{"p":[[-122.335896,47.605696],[-122.335625,47.605405],[-122.335568,47.605429],[-122.335327,47.605172],[-122.335733,47.605],[-122.336092,47.605385],[-122.336097,47.605383],[-122.336192,47.605484],[-122.336095,47.605525],[-122.336153,47.605588]],"nm":"Old Federal Reserve Bank Building","lv":4,"osm":"way/232080838"},"101":{"p":[[-122.334306,47.605415],[-122.334252,47.605355],[-122.334187,47.605383],[-122.33415,47.605341],[-122.334082,47.605369],[-122.334002,47.605404],[-122.333949,47.605348],[-122.333694,47.605073],[-122.333736,47.604949],[-122.333776,47.60483],[-122.334199,47.604657],[-122.334355,47.604825],[-122.334325,47.604908],[-122.3343,47.604896],[-122.33437,47.604664],[-122.334443,47.604678],[-122.334493,47.604687],[-122.334449,47.604813],[-122.33439,47.604978],[-122.334401,47.60499],[-122.334483,47.605079],[-122.334556,47.605159],[-122.334648,47.60518],[-122.334687,47.605185],[-122.334656,47.605274],[-122.334541,47.605321]],"nm":"Docusign Tower","lv":4,"osm":"way/139320258"},"102":{"p":[[-122.330628,47.604781],[-122.330606,47.604756],[-122.330581,47.604735],[-122.330553,47.604717],[-122.330519,47.604703],[-122.330484,47.604692],[-122.330446,47.604685],[-122.330407,47.604681],[-122.330365,47.604682],[-122.330289,47.604683],[-122.330232,47.604675],[-122.330006,47.604433],[-122.330704,47.604139],[-122.330879,47.604063],[-122.33097,47.604152],[-122.331428,47.604653],[-122.331096,47.604793],[-122.330769,47.604932]],"nm":"Columbia Center","lv":4,"osm":"way/107124288"},"103":{"p":[[-122.336932,47.604492],[-122.337328,47.604326],[-122.337872,47.604925],[-122.337454,47.605097],[-122.337401,47.605038],[-122.337418,47.605031]],"nm":"National Building","lv":6,"osm":"way/232080848"},"104":{"p":[[-122.332714,47.605045],[-122.332728,47.605039],[-122.332646,47.604951],[-122.332875,47.604855],[-122.332857,47.604835],[-122.332688,47.604906],[-122.332427,47.604621],[-122.332596,47.604551],[-122.332577,47.60453],[-122.33235,47.604626],[-122.332221,47.604487],[-122.332659,47.604302],[-122.332884,47.604548],[-122.332867,47.604555],[-122.332973,47.60467],[-122.332987,47.604664],[-122.333212,47.604908],[-122.332763,47.605096]],"nm":"Central Building","lv":9,"osm":"way/232088568"},"106":{"p":[[-122.334645,47.603871],[-122.334882,47.603773],[-122.334877,47.603767],[-122.335123,47.603664],[-122.335335,47.603896],[-122.335374,47.603939],[-122.335402,47.603971],[-122.335194,47.604057],[-122.335191,47.604054],[-122.334944,47.604157],[-122.334545,47.604323],[-122.334401,47.604165],[-122.334772,47.60401]],"nm":"Exchange Building","lv":23,"osm":"way/240874270"},"107":{"p":[[-122.332268,47.603884],[-122.332543,47.604186],[-122.332258,47.604304],[-122.332205,47.604326],[-122.332107,47.604367],[-122.331832,47.604066],[-122.331983,47.604004],[-122.332083,47.603962]],"nm":"Pacific Building","lv":23,"osm":"way/357527945"},"108":{"p":[[-122.334837,47.603406],[-122.335018,47.603604],[-122.334767,47.603709],[-122.33453,47.603807],[-122.334506,47.603816],[-122.334239,47.603928],[-122.334059,47.60373],[-122.334436,47.603573]],"nm":"Norton Building","lv":19,"h":60.4,"osm":"way/232088570"},"110":{"p":[[-122.333371,47.603471],[-122.333404,47.603456],[-122.333348,47.603394],[-122.333112,47.603135],[-122.332927,47.603211],[-122.332857,47.603239],[-122.332696,47.603307],[-122.332627,47.603336],[-122.332482,47.603396],[-122.332416,47.603423],[-122.332231,47.603499],[-122.332464,47.603754],[-122.332525,47.603822],[-122.332732,47.603736],[-122.332955,47.603643],[-122.333005,47.603622]],"nm":"Dexter Horton Building","osm":"way/110176007"},"111":{"p":[[-122.334264,47.603466],[-122.333997,47.603565],[-122.333938,47.603612],[-122.333577,47.603256],[-122.333717,47.603198],[-122.33384,47.603147],[-122.333937,47.603106],[-122.334073,47.60321],[-122.33416,47.603291],[-122.334218,47.603371]],"nm":"Millennium Tower","lv":20,"h":83.3,"osm":"way/110175996"},"112":{"p":[[-122.333945,47.603029],[-122.33379,47.603093],[-122.333754,47.603054],[-122.33369,47.60308],[-122.333724,47.603118],[-122.333508,47.603208],[-122.333346,47.60303],[-122.333782,47.60285]],"nm":"Hoge Building","lv":17,"h":62.9,"osm":"way/110176004"},"113":{"p":[[-122.332966,47.602601],[-122.333391,47.602425],[-122.333446,47.602485],[-122.333519,47.602565],[-122.333507,47.60257],[-122.333534,47.602599],[-122.333547,47.602594],[-122.333632,47.602685],[-122.333672,47.602729],[-122.333245,47.602906]],"nm":"Broderick Building","lv":7,"h":29.0,"osm":"way/140628855"},"114":{"p":[[-122.33581,47.602398],[-122.3361,47.60271],[-122.336595,47.602502],[-122.33631,47.602189]],"nm":"Polson Building","lv":6,"h":24.0,"osm":"way/910735475"},"115":{"p":[[-122.327802,47.599317],[-122.328148,47.599318],[-122.328141,47.599949],[-122.327793,47.599948],[-122.327795,47.599814]],"lv":9,"osm":"way/235384847"},"116":{"p":[[-122.33223,47.599971],[-122.332231,47.599611],[-122.332739,47.599612],[-122.332738,47.599971]],"nm":"The State Building","lv":5,"osm":"way/226323015"},"117":{"p":[[-122.334853,47.599727],[-122.334854,47.599282],[-122.335476,47.599282],[-122.335475,47.599727]],"osm":"way/1345338883"},"118":{"p":[[-122.333539,47.599132],[-122.333538,47.598766],[-122.334047,47.598765],[-122.334048,47.599132]],"nm":"Heritage Building","lv":5,"osm":"way/226324185"},"119":{"p":[[-122.333032,47.598718],[-122.333029,47.598382],[-122.333494,47.59838],[-122.333495,47.598716]],"lv":6,"osm":"way/226324179"},"120":{"p":[[-122.335381,47.598215],[-122.33475,47.598217],[-122.334367,47.598217],[-122.334366,47.597834],[-122.335276,47.597835],[-122.335274,47.598013],[-122.335328,47.598016]],"nm":"Seattle Hardware Company Building","lv":7,"osm":"way/244113478"},"121":{"p":[[-122.328858,47.598938],[-122.328732,47.598938],[-122.328732,47.598943],[-122.328342,47.598943],[-122.328342,47.598936],[-122.328221,47.598936],[-122.328218,47.598818],[-122.328223,47.598818],[-122.328225,47.598511],[-122.328219,47.598511],[-122.328219,47.598395],[-122.328252,47.598395],[-122.328252,47.598381],[-122.328252,47.598272],[-122.32886,47.598271],[-122.328861,47.598513],[-122.328854,47.598514],[-122.328852,47.598817],[-122.328861,47.598817]],"nm":"Union Station","lv":3,"osm":"way/45569666"},"122":{"p":[[-122.334366,47.59787],[-122.334366,47.597691],[-122.33437,47.596831],[-122.334525,47.59683],[-122.33494,47.597329],[-122.334975,47.597371],[-122.335082,47.597498],[-122.335136,47.597594],[-122.335206,47.597689],[-122.335279,47.597868]],"lv":6,"osm":"way/226324738"},"123":{"p":[[-122.328287,47.596748],[-122.328859,47.596748],[-122.32886,47.59696],[-122.328804,47.59696],[-122.328805,47.597242],[-122.328858,47.597242],[-122.328859,47.597454],[-122.328604,47.597454],[-122.328287,47.597455]],"nm":"605 Union Station","lv":8,"osm":"way/235386588"},"124":{"p":[[-122.327381,47.595428],[-122.32656,47.595014],[-122.32679,47.594806],[-122.327611,47.59522]],"nm":"Inscape","lv":4,"osm":"way/226306327"}};
+/* Build Vitals records keyed by building # (the "i" field of B). Each value is one build_vitals.json as written by
+   spark-3d-pipeline/src/twin/build_vitals.py: { bhi, evidence_coverage, generated, vitals: { <key>: { label, score,
+   weight, evidence_coverage, inputs: [{ source, value, weight, tier: "T0"|"T1"|"T2"|"T3", note }] } } }.
+   Empty until the scorer runs citywide; fill it with tools/embed_json.py --var BV <file.json>. */
+const BV = {};
+const K = Math.cos(47.62 * Math.PI / 180);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = n => n === null || n === undefined ? '—' : n.toLocaleString('en-US');
+/* Colour of a building's paint. 'leased' = share leased (default); 'bhi' = Building Health Index when a record
+   exists, gray for insufficient evidence — never a fake number. */
+let colorBy = 'leased';
+const leasedCol = b => b.l === null ? css('--vnull') : b.l < 10 ? css('--v0') : b.l < 25 ? css('--v1') : b.l < 50 ? css('--v2') : b.l < 75 ? css('--v3') : css('--v4');
+const bhiCol = b => { const r = BV[b.i]; if (!r || r.bhi === null || r.bhi === undefined) return css('--vnull');
+  return r.bhi < 20 ? css('--h0') : r.bhi < 40 ? css('--h1') : r.bhi < 60 ? css('--h2') : r.bhi < 80 ? css('--h3') : css('--h4'); };
+const vcol = b => colorBy === 'bhi' ? bhiCol(b) : leasedCol(b);
+function renderLegend(){
+  const bhi = colorBy === 'bhi';
+  document.getElementById('lg-title').textContent = bhi ? 'Building Health Index' : 'Share of building leased';
+  document.getElementById('lg-ramp').innerHTML = [0,1,2,3,4].map(i => '<span style="background:var(--' + (bhi ? 'h' : 'v') + i + ')"></span>').join('');
+  document.getElementById('lg-lo').textContent = bhi ? '0 — critical' : '0% — empty';
+  document.getElementById('lg-hi').textContent = bhi ? '100 — healthy' : '75%+';
+  document.getElementById('lg-null').textContent = bhi ? 'Insufficient evidence — no BHI yet' : 'Leased share not disclosed';
+}
+
+let filter = 'all', selected = null, hovered = null, viewer = null, tileset = null;
+const ents = new Map();
+let fpPrim = null, fpDirty = false;          // classification primitive that paints the footprints onto the 3D tiles
+const byFid = new Map(B.map(b => ['f' + b.i, b]));
+
+function passes(b){
+  if (filter === 'vacant')   return b.l !== null && b.l <= 25;
+  if (filter === 'empty')    return b.l !== null && b.l <= 10;
+  if (filter === 'noenergy') return b.e === null;
+  return true;
+}
+
+/* ---------- key gate ---------- */
+/* localStorage is unavailable in some file:// and sandboxed contexts — degrade to session-only */
+const store = {
+  get(){ try { return localStorage.getItem('gmp_tiles_key'); } catch(e){ return null; } },
+  set(v){ try { localStorage.setItem('gmp_tiles_key', v); } catch(e){} },
+  del(){ try { localStorage.removeItem('gmp_tiles_key'); } catch(e){} }
+};
+/* Hackathon convenience: the Google Maps Platform key is baked in so the page loads without prompting.
+   Google Cloud project "GrowthHit Ads Grid", key "Spark Hack Map Tiles" (Map Tiles API). Anyone with this
+   file can use the key — restrict it to your demo domain / referrers in the Cloud Console before sharing
+   the file, and don't commit it to a public repo. A ?key= parameter or a key saved in this browser wins. */
+const DEFAULT_KEY = 'AIzaSyBUrfo2BAAN71j9u4qmfOpeCoX1bj3gwdY';
+const qs = new URLSearchParams(location.search);
+const stored = qs.get('key') || store.get() || DEFAULT_KEY;
+document.getElementById('key').value = stored;
+document.getElementById('go').onclick = () => start(document.getElementById('key').value.trim());
+document.getElementById('key').addEventListener('keydown', e => { if (e.key === 'Enter') start(e.target.value.trim()); });
+document.getElementById('forget').onclick = () => { store.del(); document.getElementById('key').value = DEFAULT_KEY; setErr('Stored key removed; the built-in key will be used.'); };
+function setErr(m){ document.getElementById('err').textContent = m || ''; }
+if (stored) start(stored);
+
+async function start(key){
+  if (!key){ setErr('Paste an API key first.'); return; }
+  setErr('');
+  document.getElementById('gate').style.display = 'none';
+  status('Loading Google 3D tiles…');
+  try {
+    if (!viewer) buildViewer();
+    tileset = await Cesium.Cesium3DTileset.fromUrl(
+      'https://tile.googleapis.com/v1/3dtiles/root.json?key=' + encodeURIComponent(key),
+      { showCreditsOnScreen: true, maximumScreenSpaceError: 8 });
+    tileset.customShader = grayShader;
+    viewer.scene.primitives.add(tileset);
+    store.set(key);
+    if (!qs.get('key')) history.replaceState(null, '', location.pathname);
+    status('');
+    resetView();
+  } catch (e){
+    console.error(e);
+    document.getElementById('gate').style.display = 'flex';
+    setErr('Google rejected that key or the Map Tiles API is not enabled on it. (' + (e && e.message ? e.message.slice(0, 140) : 'no detail') + ')');
+    status('');
+  }
+}
+function status(m){ const s = document.getElementById('status'); s.textContent = m; s.style.display = m ? 'block' : 'none'; }
+
+/* ---------- gray map ----------
+   Google's imagery is busy and colorful, which fights the leased-share paint. This CustomShader runs on
+   every tile fragment and mixes its texture color toward luminance (u_gray = 1 → full grayscale, 0 → as
+   shipped). The 'Gray map' chip toggles it live; painted footprints are unaffected because classification
+   is applied after the tile color is written. */
+const grayShader = new Cesium.CustomShader({
+  uniforms: {
+    u_gray: { type: Cesium.UniformType.FLOAT, value: 1.0 },
+    u_dim:  { type: Cesium.UniformType.FLOAT, value: 0.6 },                       /* tile opacity over the page background */
+    u_bg:   { type: Cesium.UniformType.VEC3, value: new Cesium.Cartesian3(0.059, 0.078, 0.102) }   /* #0F141A */
+  },
+  fragmentShaderText: `
+    void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
+      vec3 c = material.diffuse;
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));   /* Rec. 709 luminance */
+      vec3 g = mix(c, vec3(l), u_gray);
+      material.diffuse = mix(u_bg, g, u_dim);            /* like drawing the map at u_dim opacity on the dark page */
+    }`
+});
+const colorBtn = document.getElementById('colorby');
+colorBtn.hidden = Object.keys(BV).length === 0;          /* only offer BHI colouring once records exist */
+colorBtn.onclick = () => {
+  colorBy = colorBy === 'bhi' ? 'leased' : 'bhi';
+  colorBtn.setAttribute('aria-pressed', String(colorBy === 'bhi'));
+  renderLegend();
+  for (const [i, e] of ents){ e.point.color = Cesium.Color.fromCssColorString(vcol(e.b)); }
+  syncFootprints();
+  if (viewer) viewer.scene.requestRender();
+};
+renderLegend();
+const grayBtn = document.getElementById('gray');
+grayBtn.onclick = () => {
+  const on = grayBtn.getAttribute('aria-pressed') !== 'true';
+  grayBtn.setAttribute('aria-pressed', String(on));
+  grayShader.setUniform('u_gray', on ? 1.0 : 0.0);
+  if (viewer) viewer.scene.requestRender();
+};
+
+/* ---------- viewer ---------- */
+function buildViewer(){
+  viewer = new Cesium.Viewer('cesium', {
+    globe: false, skyAtmosphere: false, baseLayerPicker: false, geocoder: false, homeButton: false,
+    sceneModePicker: false, navigationHelpButton: false, animation: false, timeline: false,
+    fullscreenButton: false, infoBox: false, selectionIndicator: false, requestRenderMode: true,
+    maximumRenderTimeChange: Infinity, contextOptions: { webgl: { antialias: true } }
+  });
+  viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#0F141A');
+  viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
+
+  for (const b of B){
+    /* CLAMP_TO_3D_TILE snaps the pin to the mesh surface at this lat/lon — i.e. the roof —
+       so no elevation model is needed. Story count only sizes the pin. The dot itself is only
+       shown when we have no footprint to paint; the label always stays. */
+    const r = Math.max(6, Math.min(16, 5 + (b.f || 4) * 0.28));
+    const e = viewer.entities.add({
+      id: 'b' + b.i,
+      position: Cesium.Cartesian3.fromDegrees(b.lo, b.la, 0),
+      point: {
+        show: !F[b.i],
+        pixelSize: r, color: Cesium.Color.fromCssColorString(vcol(b)),
+        outlineColor: Cesium.Color.fromCssColorString('#0F141A'), outlineWidth: 1.5,
+        heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(300, 1.3, 6000, 0.55)
+      },
+      label: {
+        text: (b.n || b.a), font: '12px ' + css('--font-ui'),
+        fillColor: Cesium.Color.fromCssColorString('#E7ECEF'),
+        outlineColor: Cesium.Color.fromCssColorString('#0F141A'), outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(0, -14),
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 1400),
+        showBackground: false
+      }
+    });
+    e.b = b; ents.set(b.i, e);
+  }
+  buildFootprints();
+  const nofp = B.filter(b => !F[b.i]).length;
+  document.getElementById('nofp').textContent = nofp ? '(' + nofp + ')' : '';
+
+  const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+  handler.setInputAction(m => {
+    const b = pickBuilding(m.position);
+    if (b) select(b, false); else deselect();          /* click on plain city closes the card */
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') deselect(); });
+  let lastHover = 0;
+  handler.setInputAction(m => {
+    const now = performance.now(); if (now - lastHover < 60) return; lastHover = now;   /* ~16 hit-tests/s */
+    const b = pickBuilding(m.endPosition);
+    viewer.scene.canvas.style.cursor = b ? 'pointer' : 'default';
+    const h = b ? b.i : null;
+    if (h !== hovered){ hovered = h; syncFootprints(); }
+  }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+  /* attribute writes made before the primitive finished building are replayed here */
+  viewer.scene.postRender.addEventListener(() => { if (fpDirty && fpPrim && fpPrim.ready) syncFootprints(); });
+
+  applyFilter();
+}
+
+/* Hit-testing. Pins/labels are entities, so scene.pick returns the Entity (carrying .b). Painted
+   footprints are NOT resolved through scene.pick: Cesium's shadow-volume pick shader does not cull by
+   instance (ShadowVolumeAppearanceFS, PICK branch), so with many tall batched volumes overlapping on
+   screen the returned instance id is often a neighbour's. Instead we take the mesh point under the
+   cursor (scene.pickPosition — exact on the Google tiles) and point-in-polygon it against the same
+   footprints that drive the paint, so "what you clicked" always equals "what is painted". */
+const fpIndex = B.filter(b => F[b.i]).map(b => {
+  const p = F[b.i].p; let w = Infinity, e = -Infinity, s = Infinity, n = -Infinity;
+  for (const [x, y] of p){ if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y; }
+  return { b, p, w, e, s, n };
+});
+function pip(x, y, p){
+  let inside = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++){
+    const xi = p[i][0], yi = p[i][1], xj = p[j][0], yj = p[j][1];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+const scratchCarto = new Cesium.Cartographic();
+function footprintAt(pos){
+  if (!viewer.scene.pickPositionSupported) return null;
+  const c = viewer.scene.pickPosition(pos);
+  if (!c) return null;
+  const g = Cesium.Cartographic.fromCartesian(c, Cesium.Ellipsoid.WGS84, scratchCarto);
+  if (!g) return null;
+  const lon = Cesium.Math.toDegrees(g.longitude), lat = Cesium.Math.toDegrees(g.latitude);
+  for (const f of fpIndex){
+    if (lon < f.w || lon > f.e || lat < f.s || lat > f.n || !passes(f.b)) continue;
+    if (pip(lon, lat, f.p)) return f.b;
+  }
+  return null;
+}
+function pickBuilding(pos){
+  const p = viewer.scene.pick(pos);
+  if (p && Cesium.defined(p.id) && p.id.b) return p.id.b;      /* pin or label */
+  return footprintAt(pos);
+}
+
+/* ---------- painted footprints ----------
+   Google's photorealistic tiles are one fused mesh with no per-building objects, so we can't select or
+   recolor a building directly. Instead each footprint becomes a classification volume (GroundPrimitive
+   with classificationType CESIUM_3D_TILE): wherever the tile mesh falls inside that volume it is tinted
+   with the building's color, which reads as "the building is highlighted". GroundPrimitive (rather than
+   a bare ClassificationPrimitive) is required for per-building colors in one batched primitive, and it
+   sizes the volume itself from Cesium's approximate terrain heights — for this tile that is roughly
+   -4.5 km to +4.4 km, far above Columbia Center. */
+function fpColor(b){
+  if (selected && selected.i === b.i) return Cesium.Color.fromCssColorString(css('--map-sel')).withAlpha(0.95);
+  const a = hovered === b.i ? 0.88 : selected ? 0.45 : 0.66;      /* everything else steps back while one is selected */
+  return Cesium.Color.fromCssColorString(vcol(b)).withAlpha(a);
+}
+
+/* Dark ring around the selected footprint: a polygon-with-hole classification volume (outer = footprint
+   buffered RING m outward, hole = footprint) painted near-black, so the base of the selected building —
+   and any neighbour wall it touches — gets a dark stroke. Rebuilt per selection (one instance, cheap). */
+const RING = 1.8;
+let ringPrim = null;
+function offsetRing(p, d){
+  const K2 = Math.cos(47.62 * Math.PI / 180), MX = 111320 * K2, MY = 110574;
+  const xy = p.map(([lon, lat]) => [(lon + 122.33) * MX, (lat - 47.61) * MY]);
+  const n = xy.length;
+  let area = 0; for (let i = 0; i < n; i++){ const [x1, y1] = xy[i], [x2, y2] = xy[(i + 1) % n]; area += x1 * y2 - x2 * y1; }
+  const ccw = area > 0, out = [];
+  for (let i = 0; i < n; i++){
+    const P = xy[(i + n - 1) % n], C = xy[i], Q = xy[(i + 1) % n];
+    let e1 = [C[0] - P[0], C[1] - P[1]], e2 = [Q[0] - C[0], Q[1] - C[1]];
+    const l1 = Math.hypot(e1[0], e1[1]) || 1, l2 = Math.hypot(e2[0], e2[1]) || 1;
+    e1 = [e1[0] / l1, e1[1] / l1]; e2 = [e2[0] / l2, e2[1] / l2];
+    const n1 = ccw ? [e1[1], -e1[0]] : [-e1[1], e1[0]], n2 = ccw ? [e2[1], -e2[0]] : [-e2[1], e2[0]];
+    let bx = n1[0] + n2[0], by = n1[1] + n2[1]; const bl = Math.hypot(bx, by);
+    if (bl < 1e-6){ out.push([C[0] + n1[0] * d, C[1] + n1[1] * d]); continue; }
+    bx /= bl; by /= bl;
+    const cosh = Math.sqrt(Math.max(0.5, (1 + n1[0] * n2[0] + n1[1] * n2[1]) / 2));   /* clamp miter to 2d */
+    out.push([C[0] + bx * d / cosh, C[1] + by * d / cosh]);
+  }
+  return out.map(([x, y]) => [x / MX - 122.33, y / MY + 47.61]);
+}
+function syncRing(){
+  if (ringPrim){ viewer.scene.primitives.remove(ringPrim); ringPrim = null; }
+  const f = selected && F[selected.i];
+  if (!f) return;
+  const outer = offsetRing(f.p, RING);
+  ringPrim = viewer.scene.primitives.add(new Cesium.GroundPrimitive({
+    geometryInstances: new Cesium.GeometryInstance({
+      id: 'ring',
+      geometry: new Cesium.PolygonGeometry({
+        polygonHierarchy: new Cesium.PolygonHierarchy(
+          Cesium.Cartesian3.fromDegreesArray(outer.flat()),
+          [new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(f.p.flat()))]),
+        vertexFormat: Cesium.VertexFormat.POSITION_ONLY
+      }),
+      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.fromCssColorString('#0B1014').withAlpha(0.9)) }
+    }),
+    classificationType: Cesium.ClassificationType.CESIUM_3D_TILE,
+    asynchronous: false, allowPicking: false
+  }));
+}
+function buildFootprints(){
+  const instances = [];
+  for (const b of B){
+    const f = F[b.i]; if (!f) continue;
+    instances.push(new Cesium.GeometryInstance({
+      id: 'f' + b.i,
+      geometry: new Cesium.PolygonGeometry({
+        polygonHierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(f.p.flat())),
+        vertexFormat: Cesium.VertexFormat.POSITION_ONLY
+      }),
+      attributes: {
+        color: Cesium.ColorGeometryInstanceAttribute.fromColor(fpColor(b)),
+        show: new Cesium.ShowGeometryInstanceAttribute(passes(b))
+      }
+    }));
+  }
+  if (!instances.length) return;
+  fpPrim = viewer.scene.primitives.add(new Cesium.GroundPrimitive({
+    geometryInstances: instances,
+    classificationType: Cesium.ClassificationType.CESIUM_3D_TILE,
+    asynchronous: false
+  }));
+  viewer.scene.requestRender();
+}
+function syncFootprints(){
+  if (!fpPrim) return;
+  if (!fpPrim.ready){ fpDirty = true; return; }
+  fpDirty = false;
+  for (const b of B){
+    if (!F[b.i]) continue;
+    const a = fpPrim.getGeometryInstanceAttributes('f' + b.i);
+    a.color = Cesium.ColorGeometryInstanceAttribute.toValue(fpColor(b), a.color);
+    a.show  = Cesium.ShowGeometryInstanceAttribute.toValue(passes(b), a.show);
+  }
+  viewer.scene.requestRender();
+}
+
+function resetView(){
+  /* over Elliott Bay looking north-east up the downtown–SLU corridor */
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(-122.3720, 47.5960, 1150),
+    orientation: { heading: Cesium.Math.toRadians(28), pitch: Cesium.Math.toRadians(-31), roll: 0 },
+    duration: 1.6
+  });
+}
+document.getElementById('reset').onclick = resetView;
+
+function flyTo(b){
+  /* stand ~350 m south-west of the building at a height that scales with its stories */
+  const h = 120 + (b.f || 6) * 4.2;
+  const back = 0.0034;
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(b.lo - back * 0.75, b.la - back * 0.6, h + 90),
+    orientation: { heading: Cesium.Math.toRadians(42), pitch: Cesium.Math.toRadians(-30), roll: 0 },
+    duration: 1.4
+  });
+}
+
+/* ---------- filter / select ---------- */
+function applyFilter(){
+  for (const [i, e] of ents){ e.show = passes(e.b); }
+  syncFootprints();
+  if (viewer) viewer.scene.requestRender();
+}
+document.querySelectorAll('#controls .chip[data-f]').forEach(btn => btn.onclick = () => {
+  filter = btn.dataset.f;
+  document.querySelectorAll('#controls .chip[data-f]').forEach(o => o.setAttribute('aria-pressed', String(o === btn)));
+  applyFilter();
+});
+
+function select(b, fly = true){
+  selected = b;
+  for (const [i, e] of ents){
+    e.point.outlineColor = (b && i === b.i) ? Cesium.Color.fromCssColorString(css('--map-sel')) : Cesium.Color.fromCssColorString('#0F141A');
+    e.point.outlineWidth = (b && i === b.i) ? 3 : 1.5;
+  }
+  for (const [i, e] of ents){                                     /* selected label gets a dark pill + bolder type */
+    const on = b && i === b.i;
+    e.label.showBackground = on;
+    e.label.backgroundColor = Cesium.Color.fromCssColorString('#0B1014').withAlpha(0.85);
+    e.label.font = (on ? 'bold 13px ' : '12px ') + css('--font-ui');
+    e.label.fillColor = Cesium.Color.fromCssColorString(on ? css('--map-sel') : '#E7ECEF');
+  }
+  syncRing();
+  syncFootprints();
+  viewer.scene.requestRender();
+  renderDetail();
+  if (fly && b) flyTo(b);
+}
+function deselect(){ if (selected) select(null, false); }
+
+/* ---------- Building Health Index hook ----------
+   Integration point for the deterministic BHI (see city-of-seattle-prep/ideas/build-vitals). Rules from the
+   brief: every vital carries an evidence tier (KNOWN / OBSERVED / INFERRED / UNKNOWN); a building without
+   enough evidence shows INSUFFICIENT EVIDENCE — never a fake number; weights are visible.
+   Return { score: 0-100 or null, coverage: 0-1, vitals: [{ name, tier, evidence }] }. Until the scorer is
+   wired in, `score` stays null and the card says so; the vitals list still reports honestly which inputs
+   this page already has for each vital, and from which source. */
+const TIER = { T1: ['observed', 'OBSERVED'], T2: ['known', 'KNOWN'], T3: ['inferred', 'INFERRED'], T0: ['unknown', 'UNKNOWN'],
+               KNOWN: ['known', 'KNOWN'], OBSERVED: ['observed', 'OBSERVED'], INFERRED: ['inferred', 'INFERRED'], UNKNOWN: ['unknown', 'UNKNOWN'] };
+function bhi(b){
+  const rec = BV[b.i];
+  if (rec && rec.vitals){                                   /* real scorer output → normalise for the card */
+    const rank = { T1: 3, T2: 2, T3: 1, T0: 0 };
+    const vitals = Object.values(rec.vitals).map(v => {
+      const inputs = v.inputs || [];
+      const best = inputs.reduce((m, i) => Math.max(m, rank[i.tier] ?? 0), 0);
+      const tier = ['T0', 'T3', 'T2', 'T1'][best];
+      return { name: v.label, tier, score: v.score, weight: v.weight, coverage: v.evidence_coverage, inputs,
+               evidence: inputs.map(i => '[' + i.tier + '] ' + i.source + (i.note ? ' — ' + i.note : '')).join('\n') };
+    });
+    return { score: rec.bhi, coverage: rec.evidence_coverage, generated: rec.generated, vitals };
+  }
+  const eui = b.e !== null, star = b.s !== null && b.s !== undefined, lease = b.l !== null;
+  const vitals = [
+    { name: 'Use / Utilization', tier: eui || star ? 'KNOWN' : 'UNKNOWN',
+      evidence: eui || star ? ['Site EUI ' + (eui ? b.e.toFixed(1) + ' kBtu/sf' : '—'), star ? 'ENERGY STAR ' + b.s : null].filter(Boolean).join(' · ') + ' — Seattle Energy Benchmarking 2024'
+                            : 'No energy benchmarking record; occupancy not observed' },
+    { name: 'Clean & Safety', tier: 'UNKNOWN', evidence: 'Service requests / violations not loaded yet' },
+    { name: 'Economic Sustainability', tier: lease ? 'KNOWN' : 'UNKNOWN',
+      evidence: lease ? 'Availability: ' + b.l.toFixed(0) + '% leased' + (b.r ? ', ' + fmt(b.r) + ' sf rentable' : '') + ' — Aug 2026' : 'Leased share not disclosed' },
+    { name: 'Community Engagement', tier: 'UNKNOWN', evidence: 'Ground-floor activity not measured yet' },
+    { name: 'Productivity & Upkeep', tier: 'UNKNOWN', evidence: 'SDCI permit history not loaded yet' }
+  ];
+  const known = vitals.filter(v => v.tier !== 'UNKNOWN').length;
+  return { score: null, coverage: known / vitals.length, vitals };
+}
+
+const svUrl  = b => 'https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=' + b.la + ',' + b.lo;
+const mapUrl = b => 'https://www.google.com/maps/search/?api=1&query=' + b.la + ',' + b.lo;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const dl = rows => '<dl class="d-rows">' + rows.map(([k, v]) => '<div class="d-row"><dt>' + k + '</dt><dd>' + v + '</dd></div>').join('') + '</dl>';
+
+/* The card. One block per data source, so new sources (permits, value history, complaints, sensor tier)
+   slot in as another `src` heading + rows without touching the rest. */
+function renderDetail(){
+  const d = document.getElementById('detail');
+  if (!selected){ d.hidden = true; d.innerHTML = ''; return; }
+  const b = selected, f = F[b.i], h = bhi(b);
+  const wrong = b.ma && b.ma.toUpperCase().split(' ')[0] !== b.a.toUpperCase().split(' ')[0];
+  const nb = b.nb ? b.nb.toLowerCase().replace(/(^|[\s/])\S/g, c => c.toUpperCase()) : '';
+
+  const jll = dl([
+    ['Rentable area', b.r ? fmt(b.r) + ' sf' : '—'],
+    ['Leased', b.l === null ? 'not disclosed' : b.l.toFixed(1) + '%'],
+    ['Stories', b.f || '—'],
+    ['Built', b.y || '—']
+  ]);
+  const bench = (b.e === null && !b.ma)
+    ? '<div class="flag">No city benchmarking record — no parcel ID and no energy figure.</div>'
+    : dl([
+        ['Site EUI', b.e === null ? 'no value' : b.e.toFixed(1) + ' kBtu/sf'],
+        ['ENERGY STAR score', b.s === null || b.s === undefined ? '—' : b.s],
+        ['Gross floor area', b.g ? fmt(b.g) + ' sf' : '—'],
+        ['Primary use', b.u || '—'],
+        ['Matched record', b.mn ? esc(b.mn) + (b.my ? ' (' + b.my + ')' : '') : '—']
+      ]) + (wrong ? '<div class="flag">Energy figure belongs to ' + esc(b.mn || b.ma) + ' at a neighbouring address, not this building.</div>' : '');
+  const osm = f
+    ? dl([
+        ['Footprint', f.p.length + ' vertices · ' + esc(f.osm)],
+        ['OSM name', f.nm ? esc(f.nm) : '—'],
+        ['Levels / height', (f.lv ? f.lv + ' levels' : '—') + (f.h ? ' · ' + f.h + ' m' : '')]
+      ])
+    : '<div class="flag">No footprint on file — shown as a pin at the listed coordinate.</div>';
+
+  d.innerHTML =
+    '<div class="d-top"><div><div class="d-idx">' + esc(nb || 'Seattle') + '</div>' +
+    '<h3 class="d-name">' + esc(b.n || b.a) + '</h3><p class="d-addr">' + esc(b.a) + '</p></div>' +
+    '<button class="close" id="close" type="button" aria-label="Close" title="Close (Esc)">&times;</button></div>' +
+
+    '<div class="bhi"><div class="num' + (h.score === null ? '' : ' scored') + '">' + (h.score === null ? '—' : Math.round(h.score)) + '</div>' +
+    '<div class="lbl">Building Health Index' + (h.score === null ? '' : ' / 100') + '</div>' +
+    '<div class="sub">' + (h.score === null
+        ? 'INSUFFICIENT_EVIDENCE — ' + Math.round(h.coverage * 5) + ' of 5 vitals have evidence on file; score not computed.'
+        : 'Evidence coverage ' + Math.round(h.coverage * 100) + '%' + (h.generated ? ' · scored ' + esc(String(h.generated).slice(0, 16).replace('T', ' ')) : '')) + '</div></div>' +
+    '<div class="vitals">' + h.vitals.map(v => {
+      const t = TIER[v.tier] || ['unknown', v.tier];
+      const head = v.name + (v.score === null || v.score === undefined ? '' :
+        ' <span style="font-family:var(--font-data);color:var(--ink-2)">' + Math.round(v.score) + (v.weight ? ' · w ' + v.weight : '') +
+        (v.coverage !== undefined ? ' · ' + Math.round(v.coverage * 100) + '% cov' : '') + '</span>');
+      return '<div class="vital"><span class="vn">' + head + '</span><span class="tier ' + t[0] + '">' + t[1] + '</span>' +
+        '<span class="ve" style="white-space:pre-line">' + esc(v.evidence || '') + '</span></div>';
+    }).join('') + '</div>' +
+
+    '<div class="acts"><a class="act primary" target="_blank" rel="noopener noreferrer" href="' + svUrl(b) + '">Street View</a>' +
+    '<a class="act" target="_blank" rel="noopener noreferrer" href="' + mapUrl(b) + '">Google Maps</a>' +
+    '<button class="act" id="flyto" type="button">Fly to</button></div>' +
+
+    '<div class="src">Availability · Aug 2026</div>' + jll +
+    '<div class="src">Seattle Energy Benchmarking · 2024</div>' + bench +
+    '<div class="src">OpenStreetMap footprint</div>' + osm;
+
+  d.hidden = false;
+  document.getElementById('close').onclick = deselect;
+  document.getElementById('flyto').onclick = () => flyTo(b);
+}
+renderDetail();
+</script>
+</body>
+</html>

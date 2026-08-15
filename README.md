@@ -35,6 +35,7 @@ Historical research and broad hackathon preparation live in `city-of-seattle-pre
 | VSS / live video ingestion | [`docs/vss/`](docs/vss/) |
 | Mobile capture / recast-ios | [`docs/mobile/`](docs/mobile/) |
 | Screenshots and sample outputs | [`assets/`](assets/) |
+| Citywide 3D view (app prototype) | [`apps/city-view-3d/`](apps/city-view-3d/) |
 
 ## Current Proof Points
 

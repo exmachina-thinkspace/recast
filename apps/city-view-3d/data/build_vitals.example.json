@@ -1,0 +1,48 @@
+{
+  "_comment": "Shape consumed by BV in seattle-office-vitals-3d.html. Keys are building numbers (the `i` field of B). Each value is one build_vitals.json as written by spark-3d-pipeline/src/twin/build_vitals.py (report()). Tiers: T1 direct observation, T2 official record, T3 proxy/inferred, T0 no evidence (excluded from the vital, shown as GAP). Embed with: python3 tools/embed_json.py --var BV data/build_vitals_all.json",
+  "51": {
+    "building": { "name": "Fourth & Battery", "address": "2401 4th Ave, Seattle, WA 98121" },
+    "generated": "2026-08-15T14:20:00",
+    "bhi": 58.4,
+    "evidence_coverage": 0.62,
+    "vitals": {
+      "use_utilization": {
+        "label": "Use / Utilization", "score": 71.2, "weight": 0.25, "evidence_coverage": 0.6,
+        "inputs": [
+          { "source": "camera occupancy", "value": 71.2, "weight": 0.6, "tier": "T1", "note": "mean 3.4 people observed, peak 9, across 3 cameras" },
+          { "source": "energy consumption", "value": 0.0, "weight": 0.4, "tier": "T0", "note": "no utility data connected" }
+        ]
+      },
+      "clean_safety": {
+        "label": "Clean & Safety", "score": 85.0, "weight": 0.2, "evidence_coverage": 0.2,
+        "inputs": [
+          { "source": "SDCI code complaints", "value": 0.0, "weight": 0.5, "tier": "T0", "note": "no Seattle open-data feed connected" },
+          { "source": "SPD/SFD incidents", "value": 0.0, "weight": 0.3, "tier": "T0", "note": "no feed connected" },
+          { "source": "life-safety compliance", "value": 85.0, "weight": 0.2, "tier": "T2", "note": "egress approved 2023-09-14; Type IA" }
+        ]
+      },
+      "economic": {
+        "label": "Economic Sustainability", "score": 0.0, "weight": 0.2, "evidence_coverage": 0.0,
+        "inputs": [
+          { "source": "assessed value trend", "value": 0.0, "weight": 0.6, "tier": "T0", "note": "no King County assessor feed" },
+          { "source": "vacancy", "value": 0.0, "weight": 0.2, "tier": "T0", "note": "not connected" }
+        ]
+      },
+      "community": {
+        "label": "Community Engagement", "score": 40.0, "weight": 0.15, "evidence_coverage": 0.6,
+        "inputs": [
+          { "source": "ground-floor activation", "value": 40.0, "weight": 0.6, "tier": "T1", "note": "mean 1.6 people on level 1 camera" },
+          { "source": "pedestrian counts / business activity", "value": 0.0, "weight": 0.4, "tier": "T0", "note": "not connected" }
+        ]
+      },
+      "productivity_upkeep": {
+        "label": "Productivity & Upkeep", "score": 70.0, "weight": 0.2, "evidence_coverage": 0.7,
+        "inputs": [
+          { "source": "permit activity", "value": 70.0, "weight": 0.5, "tier": "T2", "note": "tenant-improvement permit approved 2023" },
+          { "source": "maintenance / work orders", "value": 0.0, "weight": 0.3, "tier": "T0", "note": "not connected" },
+          { "source": "space subdivision", "value": 55.0, "weight": 0.2, "tier": "T1", "note": "44 rooms measured across 2 levels" }
+        ]
+      }
+    }
+  }
+}
