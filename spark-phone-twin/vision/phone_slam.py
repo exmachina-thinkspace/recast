@@ -25,6 +25,7 @@ with generous tolerance; a low-confidence match means "unplaced", not "here".
 Every entry point is defensive — a missing sensor degrades gracefully to a
 coarser placement, it never throws into the render loop.
 """
+import math
 import numpy as np
 
 CEIL = 9 * 0.3048 + 7 * 0.0254          # nominal storey clear height (m)
@@ -433,6 +434,23 @@ def constrain_move(p0, p1, walls, max_walls=4000):
                 cand = (p0[0] + (p1[0] - p0[0]) * f, p0[1] + (p1[1] - p0[1]) * f)
                 if not any(_seg_cross(p0, cand, (a, b), (c, d))
                            for a, b, c, d in near):
-                    return cand[0], cand[1], True
+                    if f >= 0.35:
+                        return cand[0], cand[1], True
+                    break
+            # Truncation alone parks the pose against the wall, and every later
+            # step truncates to zero as well -- the position never moves again.
+            # Slide instead: keep the component of the motion that runs ALONG
+            # the wall. Walking straight at it still gets nowhere, which is
+            # right; walking at an angle carries you down the corridor.
+            wx, wy = (x1 - x0), (y1 - y0)
+            wn = math.hypot(wx, wy)
+            if wn > 1e-9:
+                ux, uy = wx / wn, wy / wn
+                mvx, mvy = p1[0] - p0[0], p1[1] - p0[1]
+                t = mvx * ux + mvy * uy               # projection onto the wall
+                sx, sy = p0[0] + ux * t, p0[1] + uy * t
+                if not any(_seg_cross(p0, (sx, sy), (a, b), (c, d))
+                           for a, b, c, d in near):
+                    return sx, sy, True
             return p0[0], p0[1], True
     return p1[0], p1[1], False

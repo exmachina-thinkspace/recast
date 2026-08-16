@@ -23,11 +23,12 @@ DEV = os.environ.get("SYNTH_DEV", "synthwalk")
 # --- ground truth ---------------------------------------------------------
 # (duration_s, heading_deg, speed_mps). 1.2 m/s is an ordinary indoor walk.
 LEGS = [
-    (2.0,  90.0, 0.0),    # stand still: position must NOT drift
-    (10.0, 90.0, 1.2),    # 12 m east
-    (2.0,   0.0, 0.0),    # turn in place: heading changes, position must not
-    (5.0,   0.0, 1.2),    # 6 m north
-    (2.0,   0.0, 0.0),    # stand still again
+    (2.00, 0.0, 0.00),
+    (3.23, 180.0, 1.30),
+    (1.08, 270.0, 1.30),
+    (4.92, 0.0, 1.30),
+    (18.00, 90.0, 1.30),
+    (2.00, 90.0, 0.00),
 ]
 T0 = None          # set on the first /motion request: the app takes ~14 s to
                    # start, and the walk should begin when it is actually looking

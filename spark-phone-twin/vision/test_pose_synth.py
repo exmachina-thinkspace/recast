@@ -19,11 +19,11 @@ APP = os.path.join(HOME, "arlo-vision")
 TRACE = os.path.join(HOME, "plans", "pose_trace.jsonl")
 LOG = os.path.join(APP, "app.log")
 SYNTH_PORT = 8199
-WALK_S = 21.0            # total scripted duration
+WALK_S = 31.2            # total scripted duration
 SETTLE_S = 16.0          # app start-up; the walk begins when it first polls
 
 # ground truth, mirrored from synth_bridge.LEGS
-TRUTH_DX, TRUTH_DY = 12.0, 6.0
+TRUTH_DX, TRUTH_DY = 21.86, 2.07
 TRUTH_D = math.hypot(TRUTH_DX, TRUTH_DY)
 
 # PDR is dead reckoning: 10-25% distance error is normal and acceptable.
@@ -51,7 +51,7 @@ def start_all():
     time.sleep(2)
     env = dict(os.environ,
                BRIDGE_URL="http://127.0.0.1:%d" % SYNTH_PORT,
-               DISPLAY=":1", SHOT_EVERY="2.0",
+               DISPLAY=":1", SETUP_AUTOSTART="1", SHOT_EVERY="2.0", RECORD="1",
                XAUTHORITY="/run/user/1000/gdm/Xauthority")
     subprocess.Popen(["%s/bin/python" % APP, "%s/spark_app.py" % APP],
                      stdout=open(LOG, "w"), stderr=subprocess.STDOUT,

@@ -32,6 +32,7 @@ import localize
 import scan_session
 import pdr
 import qr_calibrate
+import twin_db
 
 PLANS = os.path.expanduser("~/plans")
 CEIL = 9 * 0.3048 + 7 * 0.0254
@@ -92,6 +93,13 @@ stop = False
 
 
 # ---------------- plan geometry: the skeleton everything anchors to ----------
+try:
+    if twin_db.init_schema():
+        print("[db] session storage ready (recast)", flush=True)
+    else:
+        print("[db] session storage unavailable; capture continues", flush=True)
+except Exception as _e:
+    print("[db] init skipped: %s" % str(_e)[:80], flush=True)
 print("[init] loading plan geometry ...", flush=True)
 LEVELS = {}
 for lv, base_z in (("level1", 0.0), ("level2", F2F)):
@@ -225,7 +233,7 @@ CAL_FORCE_SAMPLES = 10       # ...or simply enough reads: the MEDIAN of 10+ is
                              # and demanding a tight spread meant never locking
 _cal_hits = []
 SUMMARY = dict(active=False, counts={}, t=0.0, name="", points=0)
-SESSION = dict(started=False, t0=time.time())
+SESSION = dict(started=False, db_id=None, t0=time.time())
 # Generated repurposing images, shown on the desktop as soon as the phone's
 # shutter produces one — the operator is watching this screen, not the phone.
 GEN_IMG = {}        # dev id -> (image, preset, mtime)
@@ -235,6 +243,7 @@ CAPTURES = []          # [(path, dev, mtime)] every photo taken, newest first
 CAP_SEL = [0]          # which capture the next generation uses
 PRESET_OPEN = [False]  # dropdown expanded?
 _HIT = {}              # click regions: name -> (x0, y0, x1, y1)
+_TURN_LOG = {}         # rate-limit the heading-jump reports
 _TP_LOG = {}           # rate-limit teleport reports
 _PDR_QUIET = {}        # rate-limit the idle report
 _PDR_SEEN = {}         # samples already consumed, to avoid double-counting
@@ -242,6 +251,7 @@ _PDR_CLOCK = {}        # per-device synthetic clock: phones send no timestamps
 SHOT_EVERY = float(os.environ.get("SHOT_EVERY", "0"))   # seconds; 0 = off
 SHOT_DIR = os.path.expanduser("~/plans/shots")
 _SHOT = {"t": 0.0, "n": 0}
+SHOW_QR = [False]      # [b] forces the join QR back on screen
 SHOW_TREE = [False]   # [j] toggles; the map stays clear by default
 _HANDOFF = {}      # last pose handed to the renderer, per device
 _MARKER_LOG = {}   # last logged marker world position per device
@@ -285,6 +295,10 @@ try:
 except Exception:
     _prev_anchor = None
 
+LOCK_LEVEL = [None]      # a phone stays on the storey it was anchored to:
+                         # walking never changes floor, so a level flip is an
+                         # error, and it makes the marker vanish from view
+
 SETUP = dict(active=True, level="level1", x=None, y=None, map=None,
              heading=None)   # which way the QR faces; the 180-deg flip is our
                              # worst failure, and the operator simply knows this
@@ -296,8 +310,20 @@ if _prev_anchor:
     # do not block the whole dashboard waiting to be told again.
     if SETUP["heading"] is None:
         SETUP["heading"] = 0.0        # compass overrides this once a phone reports
-    if SETUP["x"] is not None and SETUP["y"] is not None:
+    # Always confirm the anchor on startup: it is the origin of every position
+    # measurement, and silently reusing a stale one hides a wrong datum.
+    LOCK_LEVEL[0] = SETUP["level"]
+    print("[setup] previous anchor (%.2f, %.2f) on %s preloaded - "
+          "click to move it, [enter] to accept"
+          % (SETUP["x"], SETUP["y"], SETUP["level"]), flush=True)
+    if os.environ.get("SETUP_AUTOSTART") == "1":
+        # unattended runs (the pose test, screenshots) accept the saved anchor
         SETUP["active"] = False
+        print("[setup] SETUP_AUTOSTART=1 -> accepted without a keypress",
+              flush=True)
+    if False:
+        SETUP["active"] = False
+        LOCK_LEVEL[0] = SETUP["level"]
         print("[setup] resumed saved anchor: %s (%.2f, %.2f) heading %.0f deg "
               "- press [a] to re-anchor"
               % (SETUP["level"], SETUP["x"], SETUP["y"], SETUP["heading"]),
@@ -379,6 +405,42 @@ def infer_depth(img):
 
 
 # ---------------- phone bridge ----------------
+
+
+
+# The extracted plan is not accurate enough to constrain a phone: it lacks
+# doors and invents barriers, which pins the marker against walls that are not
+# there. Physical limits (speed, turn rate) still apply -- those hold whatever
+# the map says.
+WALL_CONSTRAIN = False   # retired: see the note above
+MAX_TURN_DPS = 200.0     # deg/s: a brisk hand turn, far below a vision glitch
+HEADING_ALPHA = 0.35     # circular smoothing on top of the rate limit
+
+
+def damp_heading(dev_id, new_hd, now):
+    """Rate-limit and smooth a heading update. None passes through."""
+    if new_hd is None:
+        return None
+    pv = _pose_prev.get(dev_id)
+    if pv is None or pv[2] is None:
+        return float(new_hd) % 360.0
+    prev = float(pv[2])
+    dt = max(0.02, float(now) - float(pv[3]))
+    d = ((float(new_hd) - prev + 180.0) % 360.0) - 180.0     # shortest turn
+    lim = MAX_TURN_DPS * dt
+    if abs(d) > lim:
+        if time.time() - _TURN_LOG.get(dev_id, 0) > 5:
+            _TURN_LOG[dev_id] = time.time()
+            print("[pose] %s heading jump %.0f deg in %.2fs limited to %.0f"
+                  % (dev_id, abs(d), dt, lim), flush=True)
+        d = lim if d > 0 else -lim
+    target = prev + d
+    # circular exponential smoothing, so the arrow settles instead of twitching
+    a = HEADING_ALPHA
+    r0, r1 = np.radians(prev), np.radians(target)
+    sx = (1 - a) * np.cos(r0) + a * np.cos(r1)
+    sy = (1 - a) * np.sin(r0) + a * np.sin(r1)
+    return float(np.degrees(np.arctan2(sy, sx)) % 360.0)
 
 
 def clamp_move(dev_id, nx, ny, now, reason=""):
@@ -468,12 +530,15 @@ def pdr_worker():
                     pc = phone3d.get(dev_id)
                     if pc:
                         lv = pc["meta"].get("level")
+                        if LOCK_LEVEL[0] and lv != LOCK_LEVEL[0]:
+                            lv = LOCK_LEVEL[0]      # never change floor by walking
+                            pc["meta"]["level"] = lv
                     else:
                         # No camera frame has ever arrived for this device, so
                         # the frame path never made an entry. Create a pose-only
                         # one; otherwise a tracked phone is invisible.
-                        lv = (ANCHOR.get("level") or SETUP.get("level")
-                              or view.get("levels") or next(iter(LEVELS)))
+                        lv = (LOCK_LEVEL[0] or ANCHOR.get("level")
+                              or SETUP.get("level") or next(iter(LEVELS)))
                         if lv not in LEVELS:
                             lv = SETUP.get("level") or next(iter(LEVELS))
                         phone3d[dev_id] = dict(
@@ -486,11 +551,11 @@ def pdr_worker():
                                       method="pdr"))
                         print("[pdr] %s marker created from dead reckoning "
                               "(no camera frame)" % dev_id, flush=True)
-                if lv in LEVELS and float(np.hypot(dxp, dyp)) > 0.20:
-                    nx, ny, _blk = phone_slam.constrain_move(
-                        (pv[0], pv[1]), (nx, ny), LEVELS[lv]["walls"])
+                # No wall blocking: the plan is not accurate enough to be a
+                # constraint, and a wrong wall stops tracking outright.
                 _now = time.time()
                 nx, ny = clamp_move(dev_id, nx, ny, _now, "pdr")
+                hd = damp_heading(dev_id, hd, _now)
                 _pose_prev[dev_id] = (nx, ny, hd, _now, 0)
                 with _p3lock:
                     pc = phone3d.get(dev_id)
@@ -1188,14 +1253,9 @@ def build_phone_cloud(dev_id, name, img):
             # constrains a car: you cannot walk through a wall, so a step that
             # crosses one is wrong however confident the estimate was.
             step_len = float(np.hypot(nx_ - pv0[0], ny_ - pv0[1]))
-            if step_len > 0.20:
-                # Only veto a real crossing. Blocking every micro-step meant the
-                # constraint rejected 41% of frames and the marker never moved:
-                # a pose sitting near a wall makes even a 5 cm step "cross" it.
-                nx_, ny_, blocked = phone_slam.constrain_move(
-                    (pv0[0], pv0[1]), (nx_, ny_), LEVELS[lv]["walls"])
-            else:
-                blocked = False
+            # Walls do not block movement any more; see the note on
+            # WALL_CONSTRAIN. Phones traverse the floor freely.
+            blocked = False
             hx, hy = nx_, ny_
             best["pdr"] = pinfo
             best["wall_blocked"] = bool(blocked)
@@ -1242,6 +1302,7 @@ def build_phone_cloud(dev_id, name, img):
             elif hd is None:
                 hd = ph_
         hx, hy = clamp_move(dev_id, hx, hy, now_t, best.get("method") or "vision")
+        hd = damp_heading(dev_id, hd, now_t)
         _pose_prev[dev_id] = (hx, hy, hd, now_t, 0)
         tr_ = TRAILS.setdefault(dev_id, [])
         if not tr_ or float(np.hypot(hx - tr_[-1][0], hy - tr_[-1][1])) > TRAIL_MIN_STEP:
@@ -1400,10 +1461,21 @@ def recon_worker():
                                 cnt[tr.cls] = cnt.get(tr.cls, 0) + 1
                     SUMMARY.update(active=True, counts=cnt, t=time.time(),
                                    name=_m["name"], points=_m["total_points"])
+                    _sid = SESSION.get("db_id")
+                    with _sglock:
+                        twin_db.save_scenegraph(
+                            _sid, twin_db.objects_from_scenegraph(SG))
+                        twin_db.save_counts(
+                            _sid, twin_db.counts_from_scenegraph(SG))
+                    twin_db.end_session(_sid, points=_m["total_points"],
+                                        summary=_m)
+                    SESSION.update(started=False, db_id=None)
                     print("[scan] %s stopped -> saved %s (%s points), %d exports, "
-                          "%d object types"
+                          "%d object types%s"
                           % (gone, _m["name"], "{:,}".format(_m["total_points"]),
-                             len(made), len(cnt)), flush=True)
+                             len(made), len(cnt),
+                             ("  db session %s" % _sid) if _sid else ""),
+                          flush=True)
                 except Exception as e:
                     print("[scan] end-of-stream save failed: %s" % str(e)[:80],
                           flush=True)
@@ -1411,7 +1483,12 @@ def recon_worker():
             _were_live.update(live_ids)
 
             if devs and not SESSION["started"]:
-                SESSION.update(started=True, t0=time.time())
+                SESSION.update(started=True, t0=time.time(),
+                               db_id=twin_db.start_session(
+                                   LOCK_LEVEL[0] or ANCHOR.get("level")
+                                   or SETUP.get("level"),
+                                   [dv["id"] for dv in devs],
+                                   CAL["scale_k"]))
                 print("[session] capture started", flush=True)
             for dv in devs[:MAX_PHONE_3D]:
                 img = frames.get(dv["id"])
@@ -1594,7 +1671,8 @@ def render_setup(canvas):
         hd = SETUP["heading"]
         if hd is not None:
             a = np.radians(hd)
-            tip = _px(SETUP["x"] + 4.0 * np.cos(a), SETUP["y"] + 4.0 * np.sin(a))
+            # compass: x = sin, y = cos
+            tip = _px(SETUP["x"] + 4.0 * np.sin(a), SETUP["y"] + 4.0 * np.cos(a))
             cv2.arrowedLine(canvas, px, tip, (80, 255, 180), 3, cv2.LINE_AA,
                             tipLength=0.25)
         cv2.putText(canvas, "QR (%.1f, %.1f)%s" % (
@@ -1921,7 +1999,7 @@ def tab_scenegraph(canvas, dets):
 
 
 HEADER_H = 40
-LEFT_W = max(360, int(W * 0.36))   # phone column: the live feed is the thing
+LEFT_W = max(360, int(W * 0.50))   # phone column: the live feed is the thing
                                    # the operator watches, so give it real space
 
 
@@ -1939,10 +2017,13 @@ def panel_phones(canvas, dets):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.62, (110, 110, 110), 1, cv2.LINE_AA)
         cv2.putText(canvas, "scan the QR to join", (18, y + 66),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (85, 85, 85), 1, cv2.LINE_AA)
+        VIDEO_BOTTOM[0] = HEADER_H + 90
         return
     n = min(len(devs), 3)
     rh = avail // n
-    tile_h = int(rh * 0.52)
+    # A single phone gets the lion's share: the feed is what is being watched.
+    tile_h = int(rh * (0.72 if n == 1 else 0.56))
+    VIDEO_BOTTOM[0] = HEADER_H + (n - 1) * rh + tile_h + 30
     R = rot(view["yaw"], view["pitch"])
 
     for i, dv in enumerate(devs[:n]):
@@ -2029,6 +2110,15 @@ def panel_phones(canvas, dets):
                         (int(pts[:, 0].min()), min(tile_h - 6, ly + 16)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.36, qcol, 1, cv2.LINE_AA)
 
+        # A phone can stream video while sending no motion at all; without
+        # saying so, "the position will not move" looks like a tracking bug.
+        _sv = SENSORS.get(dv["id"]) or {}
+        if not [k for k in _sv if isinstance(_sv[k], (int, float))]:
+            cv2.rectangle(cell, (6, tile_h - 30), (LEFT_W - 28, tile_h - 8),
+                          (0, 0, 140), -1)
+            cv2.putText(cell, "NO SENSORS - tap the phone screen",
+                        (12, tile_h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                        (255, 255, 255), 1, cv2.LINE_AA)
         canvas[top:top + tile_h, 8:8 + LEFT_W - 16] = cell
         cv2.rectangle(canvas, (8, top), (8 + LEFT_W - 16, top + tile_h), col, 2)
         cv2.rectangle(canvas, (8, top), (8 + LEFT_W - 16, top + 22), (0, 0, 0), -1)
@@ -2066,13 +2156,39 @@ def panel_phones(canvas, dets):
 
 
 
+
+def _tab_bar(canvas):
+    """Draw the tab strip and register its click regions."""
+    y = VIDEO_BOTTOM[0] + 4
+    h = 26
+    if y + h > H:
+        return
+    w = (LEFT_W - 16) // len(LEFT_TABS)
+    for i, name in enumerate(LEFT_TABS):
+        x = 8 + i * w
+        on = (i == LEFT_TAB[0])
+        cv2.rectangle(canvas, (x, y), (x + w - 3, y + h),
+                      (48, 66, 88) if on else (22, 24, 28), -1)
+        if on:
+            cv2.line(canvas, (x, y + h - 2), (x + w - 3, y + h - 2),
+                     (120, 200, 255), 2)
+        cv2.putText(canvas, name, (x + 10, y + 18), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.42, (170, 220, 255) if on else (120, 120, 128), 1,
+                    cv2.LINE_AA)
+        _HIT["tab_%d" % i] = (x, y, x + w - 3, y + h)
+
 def left_panel(canvas):
-    """Gallery and preset picker. Never draws at x >= LEFT_W."""
+    """Tabbed lower-left panels. Never draws at x >= LEFT_W."""
     _HIT.clear()
+    _tab_bar(canvas)
+    if LEFT_TAB[0] != 0:            # PHOTOS owns the gallery + preset picker
+        return
     x0, x1 = 8, LEFT_W - 10
     if x1 <= x0:
         return
-    y = H - 26                                   # build upward from the bottom
+    # Build upward from whatever the join QR left free, not from the window
+    # edge: the badge sits at the bottom and the gallery used to run under it.
+    y = (LEFT_BOTTOM[0] if LEFT_BOTTOM[0] else H) - 26
 
     # preset dropdown (collapsed row, or an open list above it)
     rowh = 22
@@ -2158,12 +2274,128 @@ def panel_click(x, y):
                 PRESET_OPEN[0] = False
                 print("[gen] preset -> %s"
                       % GEN_PRESETS[GEN_SEL[0] % len(GEN_PRESETS)], flush=True)
+            elif name.startswith("tab_"):
+                _t = int(name.split("_")[1])
+                # clicking the open tab closes it, back to map + video only
+                LEFT_TAB[0] = -1 if LEFT_TAB[0] == _t else _t
+                print("[ui] tab -> %s" % LEFT_TABS[LEFT_TAB[0]], flush=True)
             elif name.startswith("cap_"):
                 CAP_SEL[0] = int(name.split("_")[1])
                 print("[gen] photo -> %s" % os.path.basename(
                     CAPTURES[CAP_SEL[0]][0]), flush=True)
             return True
     return False
+
+
+REC_DIR = os.path.expanduser("~/plans/recordings")
+REC_ON_START = os.environ.get("RECORD", "0") == "1"
+REC_FPS = float(os.environ.get("RECORD_FPS", "12"))
+LEFT_TABS = ("PHOTOS", "IMAGINED", "SENSORS")
+LEFT_TAB = [-1]          # -1 = closed. Only the map and the live video
+                         # share the screen unless a tab is opened.
+LEFT_BOTTOM = [0]        # top edge of the join QR, or H when hidden
+VIDEO_BOTTOM = [0]       # lowest y the live tile occupies; nothing else may
+                         # draw above this in the left column
+_REC_PENDING = [False]   # set from RECORD=1 at startup
+_REC = {"w": None, "path": None, "frames": 0, "t0": 0.0}
+
+
+def _rec_toggle(canvas):
+    """Start or stop recording. Returns a short status for the operator."""
+    if _REC["w"] is not None:
+        _rec_stop()
+        return "recording saved"
+    try:
+        os.makedirs(REC_DIR, exist_ok=True)
+        n = 1
+        while os.path.exists(os.path.join(REC_DIR, "session_%03d.avi" % n)):
+            n += 1
+        path = os.path.join(REC_DIR, "session_%03d.avi" % n)
+        h, w = canvas.shape[:2]
+        vw = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"MJPG"),
+                             REC_FPS, (w, h))
+        if not vw.isOpened():
+            print("[rec] could not open a writer for %dx%d" % (w, h), flush=True)
+            return "recording failed"
+        _REC.update(w=vw, path=path, frames=0, t0=time.time())
+        print("[rec] recording -> %s" % path, flush=True)
+        return "recording"
+    except Exception as e:
+        print("[rec] start failed: %s" % str(e)[:90], flush=True)
+        return "recording failed"
+
+
+def _rec_stop():
+    if _REC["w"] is None:
+        return
+    try:
+        _REC["w"].release()
+    except Exception:
+        pass
+    dur = time.time() - _REC["t0"]
+    _saved_path = _REC["path"]
+    print("[rec] saved %s (%d frames, %.1fs)"
+          % (_REC["path"], _REC["frames"], dur), flush=True)
+    _REC.update(w=None, path=None, frames=0,
+                last_saved=_saved_path, last_t=time.time())
+
+
+def _rec_write(canvas):
+    if _REC["w"] is None:
+        return
+    try:
+        _REC["w"].write(canvas)
+        _REC["frames"] += 1
+    except Exception:
+        pass
+
+
+
+def _rec_badge(canvas):
+    """Recording indicator + where the file is written. Left column only."""
+    y = HEADER_H + 6
+    if _REC["w"] is not None:
+        secs = time.time() - _REC["t0"]
+        cv2.rectangle(canvas, (8, y), (min(LEFT_W - 10, 8 + 300), y + 38),
+                      (0, 0, 0), -1)
+        cv2.circle(canvas, (24, y + 13), 6, (60, 60, 235), -1)
+        cv2.putText(canvas, "REC  %d:%02d  [m] stop" % (secs // 60, secs % 60),
+                    (38, y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.46,
+                    (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "~/plans/recordings/%s"
+                    % os.path.basename(_REC["path"] or ""),
+                    (14, y + 33), cv2.FONT_HERSHEY_SIMPLEX, 0.36,
+                    (170, 210, 240), 1, cv2.LINE_AA)
+    elif _REC.get("last_saved") and time.time() - _REC.get("last_t", 0) < 12:
+        cv2.rectangle(canvas, (8, y), (min(LEFT_W - 10, 8 + 300), y + 34),
+                      (0, 0, 0), -1)
+        cv2.putText(canvas, "saved  ~/plans/recordings/", (14, y + 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (120, 255, 190), 1,
+                    cv2.LINE_AA)
+        cv2.putText(canvas, os.path.basename(_REC["last_saved"]), (14, y + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 230, 255), 1,
+                    cv2.LINE_AA)
+    else:
+        cv2.putText(canvas, "[m] record session -> ~/plans/recordings/",
+                    (10, H - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.34,
+                    (120, 140, 160), 1, cv2.LINE_AA)
+
+def _maybe_shot(canvas):
+    """Save the displayed frame when SHOT_EVERY is set. Any screen, not just
+    the dashboard: the setup screen is the one that gates everything else."""
+    if _REC_PENDING[0] and _REC["w"] is None:
+        _REC_PENDING[0] = False        # first rendered frame: canvas size known
+        _rec_toggle(canvas)
+    _rec_write(canvas)
+    if SHOT_EVERY <= 0 or time.time() - _SHOT["t"] < SHOT_EVERY:
+        return
+    _SHOT["t"] = time.time()
+    _SHOT["n"] += 1
+    try:
+        os.makedirs(SHOT_DIR, exist_ok=True)
+        cv2.imwrite(os.path.join(SHOT_DIR, "frame_%03d.png" % _SHOT["n"]), canvas)
+    except Exception:
+        pass
 
 
 def render_dashboard(canvas, dets):
@@ -2258,12 +2490,14 @@ def render_dashboard(canvas, dets):
             half = np.radians(HFOV_DEG / 2.0)
             a = np.radians(hd)
             reach = float(np.clip(view["dist"] * 0.14, 3.0, 14.0))
-            l = origin + np.array([reach * np.cos(a - half),
-                                   reach * np.sin(a - half), 0], np.float32)
-            r_ = origin + np.array([reach * np.cos(a + half),
-                                    reach * np.sin(a + half), 0], np.float32)
-            tip = origin + np.array([reach * 1.15 * np.cos(a),
-                                     reach * 1.15 * np.sin(a), 0], np.float32)
+            # compass bearings: x = sin(a), y = cos(a). Using cos for x drew
+            # the wedge 90 degrees off the direction of travel.
+            l = origin + np.array([reach * np.sin(a - half),
+                                   reach * np.cos(a - half), 0], np.float32)
+            r_ = origin + np.array([reach * np.sin(a + half),
+                                    reach * np.cos(a + half), 0], np.float32)
+            tip = origin + np.array([reach * 1.15 * np.sin(a),
+                                     reach * 1.15 * np.cos(a), 0], np.float32)
             po, pl, pr, pt = to_px(origin), to_px(l), to_px(r_), to_px(tip)
             if po and pl and pr:
                 tri = np.array([po, pl, pr], np.int32)
@@ -2300,6 +2534,8 @@ def render_dashboard(canvas, dets):
             if not keys:
                 continue
             # Left column, on `canvas`: on `pane` this covered the map.
+            if LEFT_TAB[0] != 2:
+                continue
             pw4, rh4 = LEFT_W - 24, 22
             x4 = 12
             hh4 = 30 + rh4 * len(keys)
@@ -2412,7 +2648,7 @@ def render_dashboard(canvas, dets):
         print("[gen] state: GEN_IMG=%d keys=%s canvas=%dx%d LEFT_W=%d HEADER_H=%d"
               % (len(GEN_IMG), list(GEN_IMG)[:3], W, H, LEFT_W, HEADER_H),
               flush=True)
-    if GEN_IMG:
+    if GEN_IMG and LEFT_TAB[0] == 1:
         did_g = max(GEN_IMG, key=lambda k: GEN_IMG[k][2])
         gim, gpre, gmt = GEN_IMG[did_g]
         gh = int(min(bh * 0.62, 460))
@@ -2458,9 +2694,12 @@ def render_dashboard(canvas, dets):
         # centre or the generated image on the right
         cw2 = max(240, min(int(W * 0.23), 380))
         ch2 = H - HEADER_H - 24
-        ox2, oy2 = LEFT_W + 14, HEADER_H + 12
-        if ox2 + cw2 > W:                      # tiny window: fall back inside
-            ox2, cw2 = max(8, W - cw2 - 8), min(cw2, W - 16)
+        # Left column only. LEFT_W + 14 is inside the building pane and covered
+        # the very thing the summary is meant to be read alongside.
+        ox2, oy2 = 8, HEADER_H + 12
+        cw2 = min(cw2, LEFT_W - 16)
+        if ox2 + cw2 > LEFT_W:
+            cw2 = max(120, LEFT_W - ox2 - 8)
         sub2 = canvas[oy2:oy2 + ch2, ox2:ox2 + cw2]
         cv2.addWeighted(sub2, 0.12, np.zeros_like(sub2), 0.88, 0, sub2)
         cv2.rectangle(canvas, (ox2, oy2), (ox2 + cw2, oy2 + ch2), (140, 200, 240), 2)
@@ -2499,7 +2738,7 @@ def render_dashboard(canvas, dets):
         ndev = len(phones["list"])
     cv2.putText(canvas, "RECAST  -  1700 Westlake Ave N", (14, 27),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(canvas, "phones %d   objects %d   filled %s pts   floors[f] %s   view[v] %s   scale x%.3f %s"
+    cv2.putText(canvas, "phones %d  objects %d  filled %s pts  floors[f] %s  view[v] %s  scale x%.3f %s"
                 % (ndev, nobj, "{:,}".format(filled), view["levels"],
                    VIEW_MODE[0], CAL["scale_k"],
                    "LOCKED" if CAL["locked"] else
@@ -2556,8 +2795,22 @@ def draw_qr_badge(canvas):
             QR_IMG = cv2.resize(q, (QR_SZ, QR_SZ), interpolation=cv2.INTER_NEAREST)
     with _plock:
         url, dl = phones["url"] or BRIDGE, list(phones["list"])
-    pad, bw, bh = 14, QR_SZ + 150, QR_SZ + 62
-    x0, y0 = W - bw - pad, H - bh - pad
+    # Not while a phone is already on, unless explicitly asked for with [b].
+    try:
+        with _plock:
+            _joined = len(phones["list"])
+    except Exception:
+        _joined = 0
+    if _joined and not SHOW_QR[0]:
+        LEFT_BOTTOM[0] = H
+        return
+    pad, bw, bh = 14, min(QR_SZ + 150, LEFT_W - 28), QR_SZ + 62
+    # left column, and strictly below the live video: the badge used to cover
+    # the stream, which is the one thing the operator is watching
+    x0, y0 = 8, max(VIDEO_BOTTOM[0] + 8, H - bh - pad)
+    if y0 + bh > H:
+        return
+    LEFT_BOTTOM[0] = y0
     sub = canvas[y0:y0 + bh, x0:x0 + bw]
     cv2.addWeighted(sub, 0.15, np.zeros_like(sub), 0.85, 0, sub)
     cv2.rectangle(canvas, (x0, y0), (x0 + bw, y0 + bh), (90, 90, 95), 1)
@@ -2620,10 +2873,11 @@ def _match_window_size():
     if abs(ww - W) < 2 and abs(hh - H) < 2:
         return False
     W, H = int(ww), int(hh)
-    LEFT_W = max(280, int(W * 0.26))
+    LEFT_W = max(280, int(W * 0.50))
     print("[ui] rendering 1:1 at %dx%d" % (W, H), flush=True)
     return True
 cv2.setMouseCallback(WIN, on_mouse)
+_REC_PENDING[0] = REC_ON_START   # started on the first rendered frame
 fps, t0 = 0.0, time.time()
 print("[setup] pick a floor and click where the QR is posted, then press enter",
       flush=True)
@@ -2651,6 +2905,7 @@ while not stop:
 
     if SETUP["active"]:
         render_setup(canvas)
+        _maybe_shot(canvas)
         cv2.imshow(WIN, canvas)
         if not _sized:
             cv2.resizeWindow(WIN, W, H); _sized = True
@@ -2695,15 +2950,8 @@ while not stop:
 
     render_dashboard(canvas, dets)
     left_panel(canvas)
-    if SHOT_EVERY > 0 and time.time() - _SHOT["t"] >= SHOT_EVERY:
-        _SHOT["t"] = time.time()
-        _SHOT["n"] += 1
-        try:
-            os.makedirs(SHOT_DIR, exist_ok=True)
-            cv2.imwrite(os.path.join(SHOT_DIR, "frame_%03d.png" % _SHOT["n"]),
-                        canvas)
-        except Exception:
-            pass
+    _rec_badge(canvas)
+
 
     dt = time.time() - t0; t0 = time.time()
     fps = 0.9 * fps + 0.1 * (1 / dt if dt > 0 else 0)
@@ -2711,6 +2959,7 @@ while not stop:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.48, (140, 140, 140), 1, cv2.LINE_AA)
     draw_qr_badge(canvas)
 
+    _maybe_shot(canvas)
     cv2.imshow(WIN, canvas)
     k = cv2.waitKey(1) & 0xFF
     if SUMMARY["active"] and k != 255:
@@ -2828,6 +3077,16 @@ while not stop:
                      heading=ANCHOR.get("heading_deg", SETUP.get("heading")))
         print("[setup] re-anchoring: click the plan to move the QR, "
               "[,]/[.] turn it, [r] clear, enter to confirm", flush=True)
+    elif k == ord("m"):
+        _rec_toggle(canvas)
+    elif k == ord("b"):
+        SHOW_QR[0] = not SHOW_QR[0]
+        print("[ui] join QR %s" % ("shown" if SHOW_QR[0] else "auto"), flush=True)
+    elif k == ord("x"):
+        LEFT_TAB[0] = -1 if LEFT_TAB[0] >= len(LEFT_TABS) - 1 else LEFT_TAB[0] + 1
+        print("[ui] tab -> %s"
+              % ("closed" if LEFT_TAB[0] < 0 else LEFT_TABS[LEFT_TAB[0]]),
+              flush=True)
     elif k == ord("j"):
         SHOW_TREE[0] = not SHOW_TREE[0]
         print("[ui] scenegraph tree %s" % ("shown" if SHOW_TREE[0] else "hidden"),
@@ -2858,4 +3117,5 @@ while not stop:
         print("[acc] cleared", flush=True)
 
 stop = True
+_rec_stop()                      # never leave a half-written recording
 cv2.destroyAllWindows()
