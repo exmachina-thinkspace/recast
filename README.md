@@ -36,6 +36,7 @@ Historical research and broad hackathon preparation live in `city-of-seattle-pre
 | Mobile capture / recast-ios | [`docs/mobile/`](docs/mobile/) |
 | Screenshots and sample outputs | [`assets/`](assets/) |
 | Citywide 3D view (app prototype) | [`apps/city-view-3d/`](apps/city-view-3d/) |
+| Image generation: "Alternative Futures" renders (FLUX.1-dev NIM on the Spark, hosted fallback) | [`services/image-gen/`](services/image-gen/) |
 | Plans (Compound Engineering) | [`docs/plans/`](docs/plans/) |
 | Documented solutions / learnings | [`docs/solutions/`](docs/solutions/) |
 
