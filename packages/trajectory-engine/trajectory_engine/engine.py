@@ -700,11 +700,20 @@ def _projection(
         and largest_share >= assumptions["tenant_concentration_warning_pct"]
     ):
         flags.append("TENANT_CONCENTRATION")
-    if tenant_metrics.get("high_ai_exposure_share_of_occupied", 0) > 0:
+    # BUG FIX 2026-08-16: .get(key, 0) only supplies the 0 default when the
+    # key is MISSING. When there are no leases with both a usable area and
+    # end date (an honest real-world case, not just a fixture edge case --
+    # e.g. tenants are known but lease terms are unreviewed),
+    # _tenant_metrics itself correctly returns None for these fields (see
+    # its own docstring math), and .get(key, 0) passes that None straight
+    # through, crashing the `> 0` comparison below. Line ~919 in this same
+    # file already guards this identically with `(... or 0)` -- this call
+    # site just didn't match it. Same fix, applied consistently.
+    if (tenant_metrics.get("high_ai_exposure_share_of_occupied") or 0) > 0:
         flags.append("AI_SPACE_DEMAND_EXPOSURE_REQUIRES_VALIDATION")
     if (
-        tenant_metrics.get("distressed_tenant_share_of_occupied", 0) > 0
-        or tenant_metrics.get("public_distress_event_count", 0) > 0
+        (tenant_metrics.get("distressed_tenant_share_of_occupied") or 0) > 0
+        or (tenant_metrics.get("public_distress_event_count") or 0) > 0
     ):
         flags.append("PUBLIC_TENANT_DISTRESS_SIGNAL")
 

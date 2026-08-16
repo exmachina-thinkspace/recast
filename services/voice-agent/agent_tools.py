@@ -21,6 +21,15 @@ import business_search
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vision_tools  # new, additive -- image input (#2) and room-reuse (#3) tools
 
+sys.path.insert(0, os.path.expanduser("~/plans/trajectory-engine"))
+sys.path.insert(0, os.path.expanduser("~/plans"))
+try:
+    from trajectory_engine.engine import analyze_trajectory
+    import build_trajectory_input
+    TRAJECTORY_AVAILABLE = True
+except ImportError:
+    TRAJECTORY_AVAILABLE = False
+
 CITY_VIEW_HTML = os.path.expanduser("~/plans/city-view-3d/seattle-office-vitals-3d.html")
 
 _cache = {"B": None, "BV": None}
@@ -134,6 +143,21 @@ TOOL_SCHEMAS = [
             }, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_reuse_screening",
+            "description": "For the hero building, run the real trajectory-engine reuse "
+                            "screen -- evidence-gated pass/conditional/fail/unknown across "
+                            "physical, regulatory, market, and financial fit for each candidate "
+                            "use, returning SCREEN_OUT / INSUFFICIENT_EVIDENCE / "
+                            "CONDITIONAL_DUE_DILIGENCE / KEEP_FOR_DUE_DILIGENCE per candidate. "
+                            "More rigorous than whats_next_for_building -- use when asked for a "
+                            "formal reuse screening, feasibility screen, or which uses are ruled "
+                            "out vs. still open.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 
@@ -195,6 +219,22 @@ def call_tool(name, args):
 
         elif name == "whats_next_for_building":
             return vision_tools.whats_next(args.get("target_use"))
+
+        elif name == "run_reuse_screening":
+            if not TRAJECTORY_AVAILABLE:
+                return {"error": "trajectory-engine not deployed on this box yet"}
+            try:
+                payload = build_trajectory_input.build()
+                result = analyze_trajectory(payload)
+                return {
+                    "reuse_screen": result.get("reuse_screen", []),
+                    "evidence_gap_count": len(result.get("evidence_gaps", [])),
+                    "note": "Real evidence-gated screening (packages/trajectory-engine). "
+                            "SCREEN_OUT and INSUFFICIENT_EVIDENCE are both real, honest "
+                            "results -- not every candidate has enough reviewed data yet.",
+                }
+            except Exception as e:
+                return {"error": "trajectory engine failed: %s" % e}
 
         else:
             return {"error": "unknown tool: %s" % name}
