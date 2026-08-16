@@ -69,6 +69,15 @@ class State:
 class Handler(BaseHTTPRequestHandler):
     state = None
 
+    def _send_html(self, status, body):
+        payload = body.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def _send_json(self, status, body):
         payload = json.dumps(body).encode()
         self.send_response(status)
@@ -102,6 +111,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/health":
             self._send_json(200, {"ok": True, "service": "recast-lens-bridge"})
             return
+        if path in {"/", "/viewer", "/api/recast-lens/viewer"}:
+            self._send_html(200, VIEWER_HTML)
+            return
         if path == "/api/recast-lens/status":
             self._send_json(200, self.state.status())
             return
@@ -109,6 +121,30 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(200, self.state.latest_frame_path, "image/jpeg")
             return
         self._send_json(404, {"error": "not found"})
+
+    def do_HEAD(self):
+        path = urlparse(self.path).path
+        if path in {"/", "/viewer", "/api/recast-lens/viewer"}:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            return
+        if path == "/api/recast-lens/latest.jpg":
+            if not os.path.exists(self.state.latest_frame_path):
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.end_headers()
+            return
+        if path in {"/health", "/api/recast-lens/status"}:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.end_headers()
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -135,6 +171,59 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         sys.stderr.write("[recast-lens-bridge] " + (fmt % args) + "\n")
+
+
+VIEWER_HTML = """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recast Lens Viewer</title>
+    <style>
+      :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { margin: 0; min-height: 100vh; background: #070a0f; color: #f5f7fb; display: grid; grid-template-rows: auto 1fr auto; }
+      header, footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; background: #101722; border-bottom: 1px solid #263244; }
+      footer { border-top: 1px solid #263244; border-bottom: 0; color: #9aa6b8; font-size: 13px; }
+      h1 { margin: 0; font-size: 16px; letter-spacing: 0; }
+      .pill { padding: 5px 8px; border-radius: 5px; background: #193b2b; color: #4ee18b; font-size: 12px; font-weight: 800; }
+      main { min-height: 0; display: grid; place-items: center; padding: 16px; }
+      img { max-width: 100%; max-height: calc(100vh - 112px); object-fit: contain; border: 1px solid #263244; background: #000; }
+      #meta { overflow-wrap: anywhere; }
+    </style>
+  </head>
+  <body>
+    <header><h1>Recast Lens Viewer</h1><span class="pill" id="state">waiting</span></header>
+    <main><img id="frame" alt="latest Recast Lens frame" /></main>
+    <footer><span id="meta">No frame yet.</span><span>refresh 2 fps</span></footer>
+    <script>
+      async function tick() {
+        const ts = Date.now();
+        const img = document.getElementById('frame');
+        const state = document.getElementById('state');
+        const meta = document.getElementById('meta');
+        try {
+          const res = await fetch('/api/recast-lens/status?ts=' + ts, { cache: 'no-store' });
+          const data = await res.json();
+          if (data.has_frame) {
+            img.src = '/api/recast-lens/latest.jpg?ts=' + ts;
+            state.textContent = 'live';
+            const latest = data.latest || {};
+            meta.textContent = `frame ${latest.frame_count || data.frame_count || '?'} · ${latest.bytes || '?'} bytes · ${latest.received_at_iso || 'unknown time'} · ${latest.session_id || 'no session'}`;
+          } else {
+            state.textContent = 'waiting';
+            meta.textContent = 'No frame received yet.';
+          }
+        } catch (e) {
+          state.textContent = 'offline';
+          meta.textContent = e.message;
+        }
+      }
+      tick();
+      setInterval(tick, 500);
+    </script>
+  </body>
+</html>
+"""
 
 
 def main():

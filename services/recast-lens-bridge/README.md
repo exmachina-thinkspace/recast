@@ -71,9 +71,27 @@ origin, and Vite forwards to this bridge.
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
 | `/health` | `GET` | Health check |
+| `/viewer` | `GET` | Simple live browser viewer for the latest frame |
 | `/api/recast-lens/frame` | `POST` | Accept one JPEG frame |
 | `/api/recast-lens/status` | `GET` | Return latest session/frame metadata |
 | `/api/recast-lens/latest.jpg` | `GET` | Return latest JPEG frame |
+
+## View On The GN100
+
+Open this on the GN100 desktop to see the incoming phone frames:
+
+```text
+http://127.0.0.1:8910/viewer
+```
+
+From another LAN machine:
+
+```text
+http://172.16.94.151:8910/viewer
+```
+
+The viewer refreshes the latest JPEG frame about twice per second. It is a
+display/debug view, not VSS understanding yet.
 
 ## Current Limitation
 
