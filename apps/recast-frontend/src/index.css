@@ -332,6 +332,36 @@ a.linklike { color: var(--blue-ink); font-weight: 700; text-decoration: none; fo
   font-weight: 900;
 }
 
+.lens-object-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.lens-object-box {
+  position: absolute;
+  border: 2px solid #4ee18b;
+  box-shadow: 0 0 0 1px rgba(7, 10, 15, 0.72), 0 0 18px rgba(78, 225, 139, 0.22);
+}
+
+.lens-object-box span {
+  position: absolute;
+  left: -2px;
+  top: -25px;
+  max-width: 160px;
+  padding: 4px 6px;
+  border-radius: 4px 4px 4px 0;
+  background: rgba(7, 10, 15, 0.86);
+  color: #f5f7fb;
+  font-size: 10.5px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .lens-status-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

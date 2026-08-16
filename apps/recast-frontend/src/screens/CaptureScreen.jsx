@@ -4,6 +4,35 @@ import { API, FRONTEND_ORIGIN, analyzeImage, askAgent, detectLensObjects, getLen
 
 const FRAME_INTERVAL_MS = 750;
 
+function ObjectBoxOverlay({ objects }) {
+  const detections = objects?.objects || [];
+  const width = objects?.image_size?.width;
+  const height = objects?.image_size?.height;
+  if (!detections.length || !width || !height) return null;
+
+  return (
+    <div className="lens-object-overlay" aria-label={`${detections.length} detected objects`}>
+      {detections.slice(0, 20).map((obj, index) => {
+        const [x1, y1, x2, y2] = obj.bbox_xyxy || [];
+        if ([x1, y1, x2, y2].some((value) => typeof value !== 'number')) return null;
+        const left = Math.max(0, Math.min(100, (x1 / width) * 100));
+        const top = Math.max(0, Math.min(100, (y1 / height) * 100));
+        const boxWidth = Math.max(1, Math.min(100 - left, ((x2 - x1) / width) * 100));
+        const boxHeight = Math.max(1, Math.min(100 - top, ((y2 - y1) / height) * 100));
+        return (
+          <div
+            className="lens-object-box"
+            key={`${obj.label}-${index}-${x1}-${y1}`}
+            style={{ left: `${left}%`, top: `${top}%`, width: `${boxWidth}%`, height: `${boxHeight}%` }}
+          >
+            <span>{obj.label} {Math.round((obj.confidence || 0) * 100)}%</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function CaptureScreen({ onNext }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
@@ -232,6 +261,7 @@ export default function CaptureScreen({ onNext }) {
               <p className="subhead">Start camera on the iPhone, then stream frames to the GN100 bridge.</p>
             </div>
           )}
+          <ObjectBoxOverlay objects={objects} />
           {streaming && <div className="lens-live">LIVE</div>}
         </div>
         <canvas ref={canvasRef} hidden />

@@ -326,7 +326,11 @@ VIEWER_HTML = """<!doctype html>
       h1 { margin: 0; font-size: 16px; letter-spacing: 0; }
       .pill { padding: 5px 8px; border-radius: 5px; background: #193b2b; color: #4ee18b; font-size: 12px; font-weight: 800; }
       main { min-height: 0; display: grid; place-items: center; padding: 16px; }
-      img { max-width: 100%; max-height: calc(100vh - 190px); object-fit: contain; border: 1px solid #263244; background: #000; }
+      #frameShell { position: relative; display: inline-block; max-width: 100%; }
+      img { display: block; max-width: 100%; max-height: calc(100vh - 190px); object-fit: contain; border: 1px solid #263244; background: #000; }
+      #boxLayer { position: absolute; inset: 1px; pointer-events: none; }
+      .object-box { position: absolute; border: 2px solid #4ee18b; box-shadow: 0 0 0 1px rgba(7, 10, 15, .72), 0 0 18px rgba(78, 225, 139, .22); }
+      .object-box span { position: absolute; left: -2px; top: -25px; max-width: 160px; padding: 4px 6px; border-radius: 4px 4px 4px 0; background: rgba(7, 10, 15, .86); color: #f5f7fb; font-size: 10.5px; font-weight: 900; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       #meta { overflow-wrap: anywhere; }
       #answer { padding: 12px 16px; background: #111b28; border-top: 1px solid #263244; font-size: 15px; line-height: 1.45; }
       button { border: 0; border-radius: 5px; padding: 8px 10px; background: #2f6fed; color: #fff; font-weight: 800; cursor: pointer; }
@@ -335,7 +339,12 @@ VIEWER_HTML = """<!doctype html>
   </head>
   <body>
     <header><h1>Recast Lens Viewer</h1><span class="pill" id="state">waiting</span></header>
-    <main><img id="frame" alt="latest Recast Lens frame" /></main>
+    <main>
+      <div id="frameShell">
+        <img id="frame" alt="latest Recast Lens frame" />
+        <div id="boxLayer" aria-label="detected object boxes"></div>
+      </div>
+    </main>
     <footer>
       <span id="meta">No frame yet.</span>
       <span>
@@ -345,6 +354,36 @@ VIEWER_HTML = """<!doctype html>
     </footer>
     <div id="answer">No interpretation yet.</div>
     <script>
+      let latestObjects = null;
+
+      function renderObjectBoxes(data) {
+        latestObjects = data || latestObjects;
+        const layer = document.getElementById('boxLayer');
+        layer.innerHTML = '';
+        const objects = latestObjects?.objects || [];
+        const size = latestObjects?.image_size || {};
+        if (!objects.length || !size.width || !size.height) return;
+        for (const [index, obj] of objects.slice(0, 20).entries()) {
+          const box = obj.bbox_xyxy || [];
+          if (box.length !== 4) continue;
+          const [x1, y1, x2, y2] = box;
+          const el = document.createElement('div');
+          el.className = 'object-box';
+          const left = Math.max(0, Math.min(100, (x1 / size.width) * 100));
+          const top = Math.max(0, Math.min(100, (y1 / size.height) * 100));
+          const width = Math.max(1, Math.min(100 - left, ((x2 - x1) / size.width) * 100));
+          const height = Math.max(1, Math.min(100 - top, ((y2 - y1) / size.height) * 100));
+          el.style.left = left + '%';
+          el.style.top = top + '%';
+          el.style.width = width + '%';
+          el.style.height = height + '%';
+          const label = document.createElement('span');
+          label.textContent = `${obj.label} ${Math.round((obj.confidence || 0) * 100)}%`;
+          el.appendChild(label);
+          layer.appendChild(el);
+        }
+      }
+
       async function tick() {
         const ts = Date.now();
         const img = document.getElementById('frame');
@@ -355,12 +394,14 @@ VIEWER_HTML = """<!doctype html>
           const data = await res.json();
           if (data.has_frame) {
             img.src = '/api/recast-lens/latest.jpg?ts=' + ts;
+            if (data.objects) renderObjectBoxes(data.objects);
             state.textContent = 'live';
             const latest = data.latest || {};
             meta.textContent = `frame ${latest.frame_count || data.frame_count || '?'} · ${latest.bytes || '?'} bytes · ${latest.received_at_iso || 'unknown time'} · ${latest.session_id || 'no session'}`;
           } else {
             state.textContent = 'waiting';
             meta.textContent = 'No frame received yet.';
+            renderObjectBoxes({ objects: [] });
           }
         } catch (e) {
           state.textContent = 'offline';
@@ -402,6 +443,7 @@ VIEWER_HTML = """<!doctype html>
           } else {
             const summary = Object.entries(data.summary || {}).map(([label, count]) => `${label}: ${count}`).join(' · ');
             answer.textContent = `${data.count} objects detected${summary ? ': ' + summary : '.'}`;
+            renderObjectBoxes(data);
           }
         } catch (e) {
           answer.textContent = e.message;
