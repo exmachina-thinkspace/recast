@@ -12,6 +12,7 @@ import argparse
 import base64
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -22,6 +23,9 @@ DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "runtime")
 MAX_FRAME_BYTES = 6 * 1024 * 1024
 DEFAULT_COSMOS_API = os.environ.get("RECAST_COSMOS_API", "http://127.0.0.1:30082/v1/chat/completions")
 DEFAULT_COSMOS_MODEL = os.environ.get("RECAST_COSMOS_MODEL", "nvidia/cosmos3-nano-reasoner")
+DEFAULT_DETECTOR_PYTHON = os.environ.get("RECAST_DETECTOR_PYTHON", "/home/acer01/arlo-vision/bin/python")
+DEFAULT_DETECTOR_SCRIPT = os.environ.get("RECAST_DETECTOR_SCRIPT", os.path.join(os.path.dirname(__file__), "detect_objects.py"))
+DEFAULT_YOLO_MODEL = os.environ.get("RECAST_YOLO_MODEL", "/home/acer01/arlo-vision/yolo11m.pt")
 
 
 class State:
@@ -30,9 +34,11 @@ class State:
         self.latest_frame_path = os.path.join(data_dir, "latest.jpg")
         self.latest_meta_path = os.path.join(data_dir, "latest.json")
         self.latest_interpretation_path = os.path.join(data_dir, "latest-interpretation.json")
+        self.latest_objects_path = os.path.join(data_dir, "latest-objects.json")
         self.frame_count = 0
         self.latest_meta = None
         self.latest_interpretation = None
+        self.latest_objects = None
         os.makedirs(data_dir, exist_ok=True)
 
     def write_frame(self, frame_bytes, headers):
@@ -114,6 +120,51 @@ class State:
         self.latest_interpretation = result
         return result
 
+    def object_status(self):
+        if self.latest_objects is None and os.path.exists(self.latest_objects_path):
+            try:
+                with open(self.latest_objects_path, encoding="utf-8") as f:
+                    self.latest_objects = json.load(f)
+            except json.JSONDecodeError:
+                self.latest_objects = None
+        return {"ok": True, "latest_objects": self.latest_objects}
+
+    def detect_objects(self):
+        if not os.path.exists(self.latest_frame_path):
+            return {"error": "no frame received yet"}
+
+        started = time.time()
+        cmd = [
+            DEFAULT_DETECTOR_PYTHON,
+            DEFAULT_DETECTOR_SCRIPT,
+            self.latest_frame_path,
+            "--model",
+            DEFAULT_YOLO_MODEL,
+        ]
+        try:
+            proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=45)
+        except Exception as exc:
+            return {"error": f"object detection failed: {exc}"}
+        if proc.returncode != 0:
+            detail = (proc.stdout or proc.stderr or "").strip()
+            return {"error": f"object detection failed: {detail or proc.returncode}"}
+        try:
+            result = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return {"error": "object detection returned invalid JSON"}
+        if result.get("error"):
+            return result
+        result.update({
+            "source": "latest Recast Lens frame",
+            "frame": self.latest_meta,
+            "elapsed_s": round(time.time() - started, 2),
+            "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })
+        with open(self.latest_objects_path, "w", encoding="utf-8") as f:
+            json.dump(result, f)
+        self.latest_objects = result
+        return result
+
     def status(self):
         if self.latest_meta is None and os.path.exists(self.latest_meta_path):
             try:
@@ -127,6 +178,7 @@ class State:
             "has_frame": os.path.exists(self.latest_frame_path),
             "latest": self.latest_meta,
             "interpretation": self.interpretation_status()["latest_interpretation"],
+            "objects": self.object_status()["latest_objects"],
         }
 
 
@@ -184,6 +236,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/recast-lens/interpretation":
             self._send_json(200, self.state.interpretation_status())
             return
+        if path == "/api/recast-lens/objects":
+            self._send_json(200, self.state.object_status())
+            return
         if path == "/api/recast-lens/latest.jpg":
             self._send_file(200, self.state.latest_frame_path, "image/jpeg")
             return
@@ -205,7 +260,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "image/jpeg")
             self.end_headers()
             return
-        if path in {"/health", "/api/recast-lens/status", "/api/recast-lens/interpretation"}:
+        if path in {"/health", "/api/recast-lens/status", "/api/recast-lens/interpretation", "/api/recast-lens/objects"}:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -226,6 +281,10 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 body = {}
             result = self.state.interpret_latest(body.get("question"))
+            self._send_json(500 if result.get("error") else 200, result)
+            return
+        if path == "/api/recast-lens/detect-objects":
+            result = self.state.detect_objects()
             self._send_json(500 if result.get("error") else 200, result)
             return
         if path != "/api/recast-lens/frame":
@@ -277,7 +336,13 @@ VIEWER_HTML = """<!doctype html>
   <body>
     <header><h1>Recast Lens Viewer</h1><span class="pill" id="state">waiting</span></header>
     <main><img id="frame" alt="latest Recast Lens frame" /></main>
-    <footer><span id="meta">No frame yet.</span><button id="interpret" type="button">What am I seeing?</button></footer>
+    <footer>
+      <span id="meta">No frame yet.</span>
+      <span>
+        <button id="objects" type="button">Identify objects</button>
+        <button id="interpret" type="button">What am I seeing?</button>
+      </span>
+    </footer>
     <div id="answer">No interpretation yet.</div>
     <script>
       async function tick() {
@@ -323,7 +388,30 @@ VIEWER_HTML = """<!doctype html>
           button.textContent = 'What am I seeing?';
         }
       }
+      async function detectObjects() {
+        const button = document.getElementById('objects');
+        const answer = document.getElementById('answer');
+        button.disabled = true;
+        button.textContent = 'Detecting...';
+        answer.textContent = 'Running local YOLO object detector...';
+        try {
+          const res = await fetch('/api/recast-lens/detect-objects', { method: 'POST' });
+          const data = await res.json();
+          if (data.error) {
+            answer.textContent = data.error;
+          } else {
+            const summary = Object.entries(data.summary || {}).map(([label, count]) => `${label}: ${count}`).join(' · ');
+            answer.textContent = `${data.count} objects detected${summary ? ': ' + summary : '.'}`;
+          }
+        } catch (e) {
+          answer.textContent = e.message;
+        } finally {
+          button.disabled = false;
+          button.textContent = 'Identify objects';
+        }
+      }
       document.getElementById('interpret').addEventListener('click', interpret);
+      document.getElementById('objects').addEventListener('click', detectObjects);
       tick();
       setInterval(tick, 500);
     </script>

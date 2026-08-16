@@ -90,3 +90,12 @@ export async function interpretLensFrame(question = 'What am I seeing in this Re
   if (!res.ok || data.error) throw new Error(data.error || 'vision interpretation failed');
   return data;
 }
+
+export async function detectLensObjects() {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/detect-objects`, {
+    method: 'POST',
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'object detection failed');
+  return data;
+}

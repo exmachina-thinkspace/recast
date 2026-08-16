@@ -22,6 +22,7 @@ iPhone Safari / Recast webapp
   -> JPEG frame POST every ~750ms
   -> Recast Lens Bridge on GN100
   -> latest frame + metadata
+  -> object identification via local YOLO
   -> latest-frame interpretation via local NVIDIA Cosmos/VSS-side reasoner
   -> future temporal VSS adapter
 ```
@@ -78,6 +79,8 @@ origin, and Vite forwards to this bridge.
 | `/api/recast-lens/latest.jpg` | `GET` | Return latest JPEG frame |
 | `/api/recast-lens/interpret` | `POST` | Ask local NVIDIA vision reasoner to describe the latest frame |
 | `/api/recast-lens/interpretation` | `GET` | Return latest interpretation |
+| `/api/recast-lens/detect-objects` | `POST` | Run local YOLO object detection on the latest frame |
+| `/api/recast-lens/objects` | `GET` | Return latest object detection result |
 
 ## View On The GN100
 
@@ -94,7 +97,8 @@ http://172.16.94.151:8910/viewer
 ```
 
 The viewer refreshes the latest JPEG frame about twice per second. It is a
-display/debug view plus a latest-frame "What am I seeing?" interpretation.
+display/debug view plus latest-frame object detection and "What am I seeing?"
+interpretation.
 
 ## Vision Interpretation
 
@@ -115,6 +119,25 @@ http://127.0.0.1:30082/v1/chat/completions
 This is not yet full VSS temporal search or clip retrieval. It answers the
 first demo question: "what am I seeing right now?" from the latest Recast Lens
 frame.
+
+## Object Identification
+
+The bridge can also run local YOLO object detection on the latest frame:
+
+```bash
+curl -X POST http://127.0.0.1:8910/api/recast-lens/detect-objects
+```
+
+Default runtime on the GN100:
+
+```text
+Python: /home/acer01/arlo-vision/bin/python
+Model:  /home/acer01/arlo-vision/yolo11m.pt
+```
+
+This returns structured labels, confidence, and bounding boxes. It is the right
+path for concrete object questions such as whether the frame contains a person
+or chair. Distance estimation is intentionally not claimed here.
 
 ## Current Limitation
 

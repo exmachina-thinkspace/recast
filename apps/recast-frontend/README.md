@@ -64,6 +64,7 @@ iPhone browser camera
   -> Recast frontend
   -> POST JPEG frames to Recast Lens bridge on port 8910
   -> latest frame/status
+  -> structured object identification via local YOLO
   -> latest-frame interpretation via local NVIDIA Cosmos/VSS-side reasoner
 ```
 
@@ -73,6 +74,11 @@ The capture screen includes a `What am I seeing?` button. It asks the GN100
 bridge to interpret the latest received frame using the local NVIDIA vision
 reasoner. This is deliberately narrower than full VSS temporal search: it
 answers the current-frame demo question first.
+
+The capture screen also includes `Identify objects`, which runs local YOLO on
+the latest frame and returns structured objects such as `person`, `chair`, and
+other COCO labels with confidence and bounding boxes. It does not estimate
+distance.
 
 If iPhone Safari refuses camera permission from a LAN HTTP URL, serve the frontend over HTTPS or use a trusted/tunneled development origin. Browser camera APIs can require a secure context even when the bridge itself is reachable on the LAN.
 

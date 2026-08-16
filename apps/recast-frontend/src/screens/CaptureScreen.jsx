@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Logo, ProgressBar, Pill } from '../components.jsx';
-import { API, FRONTEND_ORIGIN, analyzeImage, askAgent, getLensBridgeHealth, interpretLensFrame, sendLensFrame, transcribe } from '../api.js';
+import { API, FRONTEND_ORIGIN, analyzeImage, askAgent, detectLensObjects, getLensBridgeHealth, interpretLensFrame, sendLensFrame, transcribe } from '../api.js';
 
 const FRAME_INTERVAL_MS = 750;
 
@@ -20,6 +20,8 @@ export default function CaptureScreen({ onNext }) {
   const [lastFrameAt, setLastFrameAt] = useState(null);
   const [interpretation, setInterpretation] = useState(null);
   const [interpreting, setInterpreting] = useState(false);
+  const [objects, setObjects] = useState(null);
+  const [detectingObjects, setDetectingObjects] = useState(false);
   const [sessionId] = useState(() => `recast-lens-${Date.now()}`);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
@@ -145,6 +147,21 @@ export default function CaptureScreen({ onNext }) {
     }
   }
 
+  async function runObjectDetection() {
+    setDetectingObjects(true);
+    setError(null);
+    setObjects(null);
+    try {
+      const data = await detectLensObjects();
+      setObjects(data);
+      setBridgeStatus('online');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDetectingObjects(false);
+    }
+  }
+
   async function runImageUpload(file) {
     setBusy(true); setError(null); setResult(null);
     try {
@@ -257,6 +274,18 @@ export default function CaptureScreen({ onNext }) {
         <button className="btn ghost block" disabled={!lastFrameAt || interpreting} onClick={runLensInterpretation}>
           {interpreting ? 'Asking NVIDIA vision...' : 'What am I seeing?'}
         </button>
+        <button className="btn ghost block" disabled={!lastFrameAt || detectingObjects} onClick={runObjectDetection}>
+          {detectingObjects ? 'Detecting objects...' : 'Identify objects'}
+        </button>
+        {objects && (
+          <div className="lens-answer">
+            <div className="score-label">Local object detector</div>
+            <p>{objects.count} objects detected{Object.keys(objects.summary || {}).length ? `: ${Object.entries(objects.summary).map(([label, count]) => `${label} ${count}`).join(', ')}` : '.'}</p>
+            {objects.objects?.length > 0 && (
+              <span>{objects.objects.slice(0, 6).map((obj) => `${obj.label} ${(obj.confidence * 100).toFixed(0)}%`).join(' · ')}</span>
+            )}
+          </div>
+        )}
         {interpretation && (
           <div className="lens-answer">
             <div className="score-label">Local NVIDIA vision</div>
