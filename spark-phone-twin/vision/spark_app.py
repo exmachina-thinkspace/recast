@@ -95,7 +95,11 @@ stop = False
 # ---------------- plan geometry: the skeleton everything anchors to ----------
 try:
     if twin_db.init_schema():
-        print("[db] session storage ready (recast)", flush=True)
+        _orph = twin_db.close_stale_sessions() if hasattr(
+            twin_db, "close_stale_sessions") else 0
+        print("[db] session storage ready (recast)%s"
+              % ("  closed %d orphaned session(s)" % _orph if _orph else ""),
+              flush=True)
     else:
         print("[db] session storage unavailable; capture continues", flush=True)
 except Exception as _e:
@@ -233,7 +237,7 @@ CAL_FORCE_SAMPLES = 10       # ...or simply enough reads: the MEDIAN of 10+ is
                              # and demanding a tight spread meant never locking
 _cal_hits = []
 SUMMARY = dict(active=False, counts={}, t=0.0, name="", points=0)
-SESSION = dict(started=False, db_id=None, t0=time.time())
+SESSION = dict(started=False, db_id=None, snap_t=0.0, t0=time.time())
 # Generated repurposing images, shown on the desktop as soon as the phone's
 # shutter produces one — the operator is watching this screen, not the phone.
 GEN_IMG = {}        # dev id -> (image, preset, mtime)
@@ -295,6 +299,7 @@ try:
 except Exception:
     _prev_anchor = None
 
+DB_SNAP_EVERY = float(os.environ.get("DB_SNAP_EVERY", "30"))
 LOCK_LEVEL = [None]      # a phone stays on the storey it was anchored to:
                          # walking never changes floor, so a level flip is an
                          # error, and it makes the marker vanish from view
@@ -1089,9 +1094,20 @@ def build_phone_cloud(dev_id, name, img):
                 # never ended when reads were filtered out. Lock immediately,
                 # then keep refining the median silently as more arrive.
                 if not CAL["locked"] and r and r.get("usable"):
-                    CAL.update(scale_k=float(r["scale_k"]), samples=1,
-                               hfov_implied=float(r["hfov_implied_deg"]),
-                               spread=None, locked=True, shown_m=QR_SIZE_M)
+                    _hf = float(r["hfov_implied_deg"])
+                    # A phone lens is 55-80 deg. Well outside that means the
+                    # depth at the code was wrong, so the scale it implies is
+                    # wrong too -- keep the pose fix, drop the scale.
+                    _scale_ok = 35.0 <= _hf <= 120.0
+                    CAL.update(scale_k=float(r["scale_k"]) if _scale_ok else 1.0,
+                               samples=1, hfov_implied=_hf,
+                               spread=None, locked=True, shown_m=QR_SIZE_M,
+                               scale_trusted=bool(_scale_ok))
+                    if not _scale_ok:
+                        print("[qr] scale REJECTED: implied hFOV %.1f deg is not "
+                              "a real lens (depth at the code is wrong); "
+                              "keeping scale 1.0 and using the pose fix only"
+                              % _hf, flush=True)
                     qr_calibrate.save(dict(CAL, qr_pattern_m=QR_SIZE_M))
                     print("[qr] LOCKED on first read: k=%.3f (hFOV~%.1f deg)"
                           % (CAL["scale_k"], CAL["hfov_implied"]), flush=True)
@@ -1481,6 +1497,22 @@ def recon_worker():
                           flush=True)
             _were_live.clear()
             _were_live.update(live_ids)
+
+            # Trail the live scenegraph into the DB while capturing: an
+            # interrupted session should not lose everything it saw.
+            if (SESSION["started"] and SESSION.get("db_id")
+                    and time.time() - SESSION.get("snap_t", 0) > DB_SNAP_EVERY):
+                SESSION["snap_t"] = time.time()
+                try:
+                    with _sglock:
+                        _objs = twin_db.objects_from_scenegraph(SG)
+                        _cnts = twin_db.counts_from_scenegraph(SG)
+                    if _cnts:
+                        twin_db.save_counts(SESSION["db_id"], _cnts)
+                    if _objs:
+                        twin_db.save_scenegraph(SESSION["db_id"], _objs)
+                except Exception as _e:
+                    print("[db] snapshot skipped: %s" % str(_e)[:70], flush=True)
 
             if devs and not SESSION["started"]:
                 SESSION.update(started=True, t0=time.time(),
@@ -2308,11 +2340,13 @@ def _rec_toggle(canvas):
     try:
         os.makedirs(REC_DIR, exist_ok=True)
         n = 1
-        while os.path.exists(os.path.join(REC_DIR, "session_%03d.avi" % n)):
+        while os.path.exists(os.path.join(REC_DIR, "session_%03d.mp4" % n)):
             n += 1
-        path = os.path.join(REC_DIR, "session_%03d.avi" % n)
+        path = os.path.join(REC_DIR, "session_%03d.mp4" % n)
         h, w = canvas.shape[:2]
-        vw = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"MJPG"),
+        # mp4v: ~52 MB/min here against MJPG's ~448. h264 is unavailable on
+        # this box (no v4l2m2m device, no software encoder in this build).
+        vw = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"),
                              REC_FPS, (w, h))
         if not vw.isOpened():
             print("[rec] could not open a writer for %dx%d" % (w, h), flush=True)
@@ -2352,29 +2386,28 @@ def _rec_write(canvas):
 
 
 def _rec_badge(canvas):
-    """Recording indicator + where the file is written. Left column only."""
-    y = HEADER_H + 6
+    """Recording indicator, drawn in the HEADER strip.
+
+    It used to sit at the top of the left column, which is the live video tile:
+    switching recording on covered the feed with the badge announcing it.
+    Nothing may occlude the camera.
+    """
+    y = 2
     if _REC["w"] is not None:
         secs = time.time() - _REC["t0"]
-        cv2.rectangle(canvas, (8, y), (min(LEFT_W - 10, 8 + 300), y + 38),
+        txt = "REC %d:%02d  [m] stop  %s" % (
+            secs // 60, secs % 60, os.path.basename(_REC["path"] or ""))
+        (tw, _th), _b = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+        x = 240                       # clear of the title on the left
+        cv2.rectangle(canvas, (x, y), (min(W - 8, x + tw + 34), y + 22),
                       (0, 0, 0), -1)
-        cv2.circle(canvas, (24, y + 13), 6, (60, 60, 235), -1)
-        cv2.putText(canvas, "REC  %d:%02d  [m] stop" % (secs // 60, secs % 60),
-                    (38, y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.46,
-                    (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(canvas, "~/plans/recordings/%s"
-                    % os.path.basename(_REC["path"] or ""),
-                    (14, y + 33), cv2.FONT_HERSHEY_SIMPLEX, 0.36,
-                    (170, 210, 240), 1, cv2.LINE_AA)
+        cv2.circle(canvas, (x + 13, y + 11), 5, (60, 60, 235), -1)
+        cv2.putText(canvas, txt, (x + 26, y + 16), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.42, (255, 255, 255), 1, cv2.LINE_AA)
     elif _REC.get("last_saved") and time.time() - _REC.get("last_t", 0) < 12:
-        cv2.rectangle(canvas, (8, y), (min(LEFT_W - 10, 8 + 300), y + 34),
-                      (0, 0, 0), -1)
-        cv2.putText(canvas, "saved  ~/plans/recordings/", (14, y + 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (120, 255, 190), 1,
-                    cv2.LINE_AA)
-        cv2.putText(canvas, os.path.basename(_REC["last_saved"]), (14, y + 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 230, 255), 1,
-                    cv2.LINE_AA)
+        txt = "saved  %s" % os.path.basename(_REC["last_saved"])
+        cv2.putText(canvas, txt, (240, y + 16), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.42, (120, 255, 190), 1, cv2.LINE_AA)
     else:
         cv2.putText(canvas, "[m] record session -> ~/plans/recordings/",
                     (10, H - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.34,
@@ -3118,4 +3151,15 @@ while not stop:
 
 stop = True
 _rec_stop()                      # never leave a half-written recording
+try:                             # and never leave a session open in the DB
+    if SESSION.get("db_id"):
+        with _sglock:
+            twin_db.save_counts(SESSION["db_id"],
+                                twin_db.counts_from_scenegraph(SG))
+            twin_db.save_scenegraph(SESSION["db_id"],
+                                    twin_db.objects_from_scenegraph(SG))
+        twin_db.end_session(SESSION["db_id"])
+        print("[db] session %s closed on exit" % SESSION["db_id"], flush=True)
+except Exception as _e:
+    print("[db] exit close skipped: %s" % str(_e)[:70], flush=True)
 cv2.destroyAllWindows()

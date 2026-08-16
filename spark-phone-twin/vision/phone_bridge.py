@@ -446,44 +446,6 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
 @keyframes pulse{0%{opacity:1}50%{opacity:.55}100%{opacity:1}}
 #shutterWrap{text-align:center;margin:6px 0}
 #shutterHint{font-size:12px;color:#9ab;margin-top:2px}
-
-#sensWarn{display:none;width:100%;border:0;cursor:pointer;background:#b3261e;color:#fff;font-weight:600;
-  padding:12px;border-radius:10px;margin:8px 0;text-align:center;font-size:15px;
-  animation:sensPulse 1.6s infinite}
-@keyframes sensPulse{0%{opacity:1}50%{opacity:.72}100%{opacity:1}}
-
-  50%{transform:scale(1.06);opacity:.75}100%{transform:scale(1);opacity:1}}
-
-#permHelp{display:none;position:fixed;left:0;right:0;bottom:0;z-index:9998;
-  background:#7f1d1d;color:#fff;padding:14px 16px;font-size:14px;line-height:1.5;
-  box-shadow:0 -4px 18px rgba(0,0,0,.5)}
-#permHelp b{display:block;font-size:15px;margin-bottom:6px}
-#permHelp ol{margin:6px 0 8px 18px;padding:0}
-#permHelp li{margin:3px 0}
-#permHelp button{background:#fff;color:#7f1d1d;border:0;border-radius:8px;
-  padding:9px 14px;font-weight:700;font-size:14px;margin-top:4px}
-
-html,body{height:100%;margin:0;padding:0;background:#000;overflow:hidden}
-h3{display:none}                       /* the feed is the page, not a heading */
-#v{position:fixed;left:0;top:0;width:100vw;height:100vh;object-fit:cover;
-   background:#000;z-index:0}
-#s{position:fixed;left:0;right:0;top:0;z-index:5;margin:0;padding:6px 10px;
-   font-size:12px;color:#cde;background:rgba(0,0,0,.45);text-align:center}
-#sensStat{position:fixed;left:0;right:0;top:26px;z-index:5;text-align:center;
-   font-size:12px;color:#9cf;background:rgba(0,0,0,.35)}
-#who{display:none}
-#snapRow{position:fixed;left:0;right:0;bottom:22px;z-index:6;display:flex;
-   align-items:center;justify-content:center;gap:14px;margin:0}
-#genimg{position:fixed;right:10px;top:56px;width:34vw;max-width:190px;z-index:6;
-   border-radius:10px;border:2px solid rgba(120,255,190,.85)}
-#preset{max-width:46vw}
-/* overlays must never push the video: fixed, compact, dismissable */
-#permHelp{position:fixed;left:8px;right:8px;bottom:96px;z-index:8;
-   max-height:38vh;overflow:auto;border-radius:12px}
-#sensWarn{position:fixed;left:50%;transform:translateX(-50%);top:54px;
-   z-index:9;width:auto;max-width:88vw;border-radius:22px;padding:11px 18px;
-   background:#b3261e;color:#fff;border:0;font-weight:700;font-size:14px;
-   box-shadow:0 3px 14px rgba(0,0,0,.5);display:none}
 </style></head><body>
 <h3>Share this camera with Recast</h3>
 <div class=row><span id=who></span></div>
@@ -495,8 +457,6 @@ h3{display:none}                       /* the feed is the page, not a heading */
  </div>
 <video id=v autoplay playsinline muted></video>
 <div id=s>idle</div>
-<div id=permHelp><b>Motion sensors are blocked - position cannot be tracked</b><span id=permWhy></span><ol><li>Tap <b>aA</b> in the address bar (top left)</li><li>Choose <b>Website Settings</b></li><li>Turn on <b>Motion &amp; Orientation Access</b>, then tap Retry</li></ol><div style='font-size:12px;opacity:.85;margin-top:4px'>Still blocked? Settings &rarr; Apps &rarr; Safari &rarr; Motion &amp; Orientation Access</div><button id=permRetry type=button>Retry now</button></div>
-<button id=sensWarn type=button>TAP TO ENABLE MOTION</button>
 <div class=row id=snapRow style="display:flex">
  <button id=capBtn>Take Picture</button>
  <select id=preset>
@@ -574,7 +534,6 @@ const sensBtn = document.getElementById('sensBtn'), sensStat = document.getEleme
 
 function attachMotionListener(){
   window.addEventListener('devicemotion', e => {
-    window.__motionSeen++;
     const lin = e.acceleration || {}, gr = e.accelerationIncludingGravity || {}, rr = e.rotationRate || {};
     sensor.gx = gr.x; sensor.gy = gr.y; sensor.gz = gr.z;
     sensor.rr_alpha = rr.alpha; sensor.rr_beta = rr.beta; sensor.rr_gamma = rr.gamma;
@@ -659,14 +618,11 @@ async function enableSensors(explicit){
         // dedicated button press. The button is revealed only if that has not
         // happened after a few seconds.
         sensStat.textContent = 'tap anywhere to enable motion sensors';
-        try{ const w=document.getElementById('sensWarn'); if(w) w.style.display='block'; }catch(e){}
-        rlog('sensor-perm', 'awaiting user gesture (no motion until the screen is tapped)');
         if(!window.__sensGestureHooked){
           window.__sensGestureHooked = true;
           const grab = () => {
             document.removeEventListener('touchend', grab, true);
             document.removeEventListener('click', grab, true);
-            rlog('sensor-perm', 'gesture captured -> requesting motion access');
             enableSensors(true);
           };
           document.addEventListener('touchend', grab, true);
@@ -678,10 +634,6 @@ async function enableSensors(explicit){
       if(caps.deviceMotionNeedsPermission){
         const rm = await DeviceMotionEvent.requestPermission();
         caps.motionPermission = rm; rlog('sensor-perm', 'motion: ' + rm);
-        try{ if(rm === 'granted'){ const w=document.getElementById('sensWarn');
-             if(w){ w.style.display='none'; } } }catch(e){}
-        try{ if(rm === 'granted'){ const w=document.getElementById('sensWarn');
-             if(w) w.style.display='none'; } }catch(e){}
         if(rm !== 'granted') sensStat.textContent = 'motion permission denied -- steps/PDR unavailable on this device';
       }
       if(caps.deviceOrientationNeedsPermission){
@@ -837,79 +789,6 @@ if(shutter) shutter.onclick = async () => {
     shutter.disabled = false; shutter.classList.remove('busy');
   }
 };
-
-// Motion needs a user gesture on iOS, but it must not cost the user a tap of
-// its own: claim the FIRST touch anywhere, whatever it was for. The camera does
-// not wait for this -- it starts on load.
-(function(){
-  let asked = false;
-  const ask = () => {
-    if(asked) return;
-    asked = true;
-    rlog('sensor-perm', 'first touch -> requesting motion + orientation');
-    try{ enableSensors(true); }catch(e){ rlog('sensor-perm','request threw: '+e); }
-  };
-  document.addEventListener('touchstart', () => {
-    ask();
-    // getUserMedia may have been deferred to a gesture: retry here too, so the
-    // feed comes up on the same touch rather than needing a Start button.
-    try{ if(!running) begin(false); }catch(e){}
-  }, {capture:true, passive:true});
-  document.addEventListener('click', ask, true);
-})();
-
-// --- motion permission recovery -----------------------------------------
-// The prompt cannot be re-triggered after a denial, so surface the state and
-// the fix, and keep retrying cheaply in case it is corrected in Settings.
-window.__motionSeen = 0;
-(function(){
-  const panel = document.getElementById('permHelp');
-  const why   = document.getElementById('permWhy');
-  const retry = document.getElementById('permRetry');
-  if(!panel) return;
-
-  const show = (reason) => {
-    if(why) why.textContent = reason || '';
-    panel.style.display = 'block';
-  };
-  const hide = () => { panel.style.display = 'none'; };
-
-  const attempt = async () => {
-    try{
-      const r = await enableSensors(true);
-      rlog('sensor-perm', 'retry -> ' + r);
-    }catch(e){ rlog('sensor-perm', 'retry threw: ' + e); }
-  };
-  if(retry) retry.onclick = attempt;
-
-  // Any tap is a fresh user activation: cheap to retry, and it recovers
-  // instantly if the setting was just changed.
-  document.addEventListener('touchend', () => {
-    if(panel.style.display === 'block') attempt();
-  }, true);
-
-  // Watchdog: what matters is whether samples actually arrive.
-  setInterval(() => {
-    const needs = (typeof DeviceMotionEvent !== 'undefined' &&
-                   typeof DeviceMotionEvent.requestPermission === 'function');
-    if(window.__motionSeen > 0){
-      hide();
-      try{ const w=document.getElementById('sensWarn');
-           if(w) w.style.display='none'; }catch(e){}
-      return;
-    }
-    try{ const w=document.getElementById('sensWarn');
-         if(w && w.style.display === 'none') w.style.display='block'; }catch(e){}
-    if(!needs) return;                       // no gate on this platform
-    const st = (window.caps && caps.motionPermission) || 'unknown';
-    if(st === 'denied'){
-      show('You chose "Don\'t Allow", and iOS will not ask again.');
-    }else if(performance.now() > 9000){
-      show('No motion data is arriving' +
-           (st === 'granted' ? ' even though access was granted.' : '.'));
-    }
-  }, 2500);
-})();
 let polling=false;
 genBtn.onclick=async ()=>{
   if(!lastPoseOk||polling) return;
@@ -993,37 +872,14 @@ async function begin(auto){
     rlog('getusermedia', (e && e.name ? e.name+': ' : '') + (e && e.message ? e.message : e) + hint);
   }
 };
-go.onclick = () => {
-  // Same gesture serves both: iOS only honours requestPermission inside one.
-  try{ enableSensors(true); }catch(e){}
-  begin(false);
-};
+go.onclick = () => begin(false);
 // try immediately: if this origin already has camera permission, streaming
 // begins with no interaction at all
-window.addEventListener('load', () => setTimeout(() => {
-  begin(true);          // auto-start: the feed is the point of this page
-  // A previously-granted origin resolves immediately with no prompt, so a
-  // returning phone comes up fully hands-free.
-  try{ enableSensors(false); }catch(e){}
-}, 250));
+window.addEventListener('load', () => setTimeout(() => begin(true), 250));
 // sensors: non-iOS platforms have no requestPermission gate, so this
 // silently succeeds there on load; iOS needs the explicit sensBtn tap above
 // and enableSensors(false) here just posts the "tap to enable" hint.
-window.addEventListener('load', () => {
-  const w = document.getElementById('sensWarn');
-  if(w){
-    // Visible until real motion samples arrive: iOS needs a gesture, and
-    // without a control there is no way to raise the prompt at all.
-    w.style.display = 'block';
-    w.onclick = () => {
-      // One gesture, every prompt: motion, orientation, and the camera.
-      rlog('sensor-perm', 'enable button tapped');
-      enableSensors(true);
-      try{ if(!running) begin(false); }catch(e){}
-    };
-  }
-  setTimeout(() => enableSensors(false), 300);
-});
+window.addEventListener('load', () => setTimeout(() => enableSensors(false), 300));
 </script></body></html>"""
 
 

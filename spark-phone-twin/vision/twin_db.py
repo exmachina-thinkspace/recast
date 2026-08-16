@@ -432,6 +432,36 @@ def end_session(session_id, points=None, summary=None):
 
 
 # ------------------------------------------------------------------- reading
+
+def close_stale_sessions(older_than_s=300):
+    """Close sessions still open from a previous run. Returns how many.
+
+    Only touches rows older than `older_than_s`, so a capture genuinely running
+    in another process is never closed out from under it.
+    """
+    conn = connect()
+    if conn is None:
+        return 0
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE recast.sessions "
+                "   SET ended_at = COALESCE(ended_at, now()), "
+                "       note = COALESCE(note, '') || ' [closed: run ended without "
+                "end_session]' "
+                " WHERE ended_at IS NULL "
+                "   AND started_at < now() - make_interval(secs => %s) "
+                "RETURNING session_id", (older_than_s,))
+            rows = cur.fetchall()
+        n = len(rows)
+        if n:
+            _note("closed %d orphaned session(s): %s"
+                 % (n, ", ".join(str(r[0]) for r in rows)))
+        return n
+    except Exception as e:
+        _note("close_stale_sessions failed: %s" % str(e)[:120])
+        return 0
+
 def recent_sessions(n=10):
     """Newest sessions with their object totals, for on-screen display."""
     def go(cur):
