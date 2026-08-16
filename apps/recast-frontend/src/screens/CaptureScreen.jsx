@@ -20,6 +20,8 @@ const FRAME_INTERVAL_MS = 200;
 const FRAME_TARGET_WIDTH = 640;
 const FRAME_JPEG_QUALITY = 0.55;
 const LENS_STATUS_INTERVAL_MS = 1000;
+const OBJECT_DETECTION_INTERVAL_MS = 4000;
+const OBJECT_RESULT_MAX_AGE_MS = 10000;
 
 function formatObjectFreshness(objects) {
   if (!objects?.created_at_iso) return 'none';
@@ -56,6 +58,16 @@ function ObjectBoxOverlay({ objects }) {
   );
 }
 
+function sameFrame(a, b) {
+  if (!a?.received_at || !b?.received_at) return false;
+  return Math.abs(Number(a.received_at) - Number(b.received_at)) < 0.001;
+}
+
+function objectResultIsFresh(objects) {
+  if (!objects?.created_at_iso) return false;
+  return Date.now() - new Date(objects.created_at_iso).getTime() < OBJECT_RESULT_MAX_AGE_MS;
+}
+
 // Real pipeline calls, not a simulated scan -- per explicit direction:
 // every button here hits an actual backend (Cosmos vision via /analyze-image,
 // or the full tool-calling agent via /chat, which can call
@@ -76,8 +88,10 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   const frameTimerRef = useRef(null);
   const statusTimerRef = useRef(null);
   const objectDetectionInFlightRef = useRef(false);
+  const lastObjectDetectionAtRef = useRef(0);
   const liveObjectTrackingRef = useRef(true);
   const trackingRequestedRef = useRef(false);
+  const trackingApiUnsupportedRef = useRef(false);
   const autoStartRequestedRef = useRef(false);
   const cameraStreamRef = useRef(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -204,7 +218,11 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   async function pollLensStatus() {
     try {
       const data = await getLensStatus(sessionId);
-      if (data.objects) setObjects(data.objects);
+      if (data.objects && (sameFrame(data.objects.frame, data.latest) || objectResultIsFresh(data.objects))) {
+        setObjects(data.objects);
+      } else if (data.objects && !objectResultIsFresh(data.objects)) {
+        setObjects(null);
+      }
       if (data.tracking) {
         const enabled = Boolean(data.tracking.enabled);
         liveObjectTrackingRef.current = enabled;
@@ -220,6 +238,16 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     const next = !liveObjectTracking;
     setDetectingObjects(true);
     try {
+      if (trackingApiUnsupportedRef.current) {
+        liveObjectTrackingRef.current = next;
+        trackingRequestedRef.current = next;
+        setLiveObjectTracking(next);
+        if (next) {
+          startLensStatusPolling();
+          maybeRunObjectDetection();
+        }
+        return;
+      }
       const data = await setLensObjectTracking(next, sessionId);
       const enabled = Boolean(data.tracking?.enabled);
       liveObjectTrackingRef.current = enabled;
@@ -227,10 +255,25 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
       setLiveObjectTracking(enabled);
       if (enabled) startLensStatusPolling();
     } catch (e) {
-      setError(e.message);
+      trackingApiUnsupportedRef.current = true;
+      liveObjectTrackingRef.current = next;
+      trackingRequestedRef.current = next;
+      setLiveObjectTracking(next);
+      if (next) {
+        startLensStatusPolling();
+        maybeRunObjectDetection();
+      }
     } finally {
       setDetectingObjects(false);
     }
+  }
+
+  function maybeRunObjectDetection() {
+    if (!liveObjectTrackingRef.current || objectDetectionInFlightRef.current) return;
+    const now = Date.now();
+    if (now - lastObjectDetectionAtRef.current < OBJECT_DETECTION_INTERVAL_MS) return;
+    lastObjectDetectionAtRef.current = now;
+    runObjectDetection({ clear: false, quiet: true });
   }
 
   async function captureAndSendFrame() {
@@ -256,9 +299,10 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
         if (liveObjectTrackingRef.current && !trackingRequestedRef.current) {
           trackingRequestedRef.current = true;
           setLensObjectTracking(true, sessionId).catch(() => {
-            trackingRequestedRef.current = false;
+            trackingApiUnsupportedRef.current = true;
           });
         }
+        maybeRunObjectDetection();
       } catch (e) {
         setError(e.message);
         setBridgeStatus('offline');
