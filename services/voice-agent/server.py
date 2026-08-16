@@ -24,6 +24,7 @@ import json
 import time
 import argparse
 import tempfile
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -37,6 +38,8 @@ VLLM_MODEL = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 
 WHISPER_MODEL_SIZE = "small"
 WHISPER_CACHE = "/media/acer01/SB-XTM5/models/whisper"
+COSMOS_API = "http://127.0.0.1:30082/v1/models"
+AUDIO_MIN_BYTES = 1024
 
 SYSTEM_PROMPT = (
     "You are the Build Vitals voice assistant, covering the hero building "
@@ -54,6 +57,50 @@ SYSTEM_PROMPT = (
 MAX_TOOL_ROUNDS = 4
 
 _whisper_model = None
+
+
+def _endpoint_ready(url, timeout=1.5):
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return 200 <= response.status < 300
+    except (OSError, urllib.error.URLError):
+        return False
+
+
+def service_health():
+    """Report wrapper and model dependencies separately.
+
+    `ok` intentionally means this HTTP wrapper is alive. Consumers should use
+    the capability flags instead of showing AGENT ONLINE from `ok` alone.
+    """
+    qwen_ready = _endpoint_ready("http://127.0.0.1:8000/v1/models")
+    cosmos_ready = _endpoint_ready(COSMOS_API)
+    whisper_cached = os.path.isdir(WHISPER_CACHE)
+    return {
+        "ok": True,
+        "agent_ready": qwen_ready,
+        "transcription_ready": whisper_cached,
+        "vision_ready": cosmos_ready,
+        "models": {
+            "agent": VLLM_MODEL,
+            "transcription": f"faster-whisper/{WHISPER_MODEL_SIZE}",
+            "vision": "nvidia/cosmos3-nano-reasoner",
+        },
+    }
+
+
+def _audio_suffix(content_type):
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    return {
+        "audio/webm": ".webm",
+        "audio/ogg": ".ogg",
+        "audio/mp4": ".m4a",
+        "audio/mpeg": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/aiff": ".aiff",
+        "audio/x-aiff": ".aiff",
+    }.get(mime, ".webm")
 
 
 def get_whisper():
@@ -141,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._send_json(200, {"ok": True})
+            self._send_json(200, service_health())
         elif self.path == "/" or self.path == "/index.html":
             index = os.path.join(HERE, "index.html")
             with open(index, "rb") as f:
@@ -159,8 +206,13 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
 
         if self.path == "/transcribe":
+            if len(raw) < AUDIO_MIN_BYTES:
+                self._send_json(400, {
+                    "error": "recording was empty or too short; hold the microphone button for at least one second"
+                })
+                return
             t0 = time.time()
-            suffix = ".webm"
+            suffix = _audio_suffix(self.headers.get("Content-Type"))
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
                 tf.write(raw)
                 tmp_path = tf.name

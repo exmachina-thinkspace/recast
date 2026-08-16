@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://recast.local/schemas/trajectory-input.schema.json",
+  "title": "Recast Building Trajectory Input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "as_of_date",
+    "building",
+    "bhi",
+    "operations",
+    "debt",
+    "leases",
+    "scenario_assumptions",
+    "reuse_candidates"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "as_of_date": { "type": "string", "format": "date" },
+    "demo_only": { "type": "boolean" },
+    "building": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["building_id", "current_use", "gross_area_sf", "market_value"],
+      "properties": {
+        "building_id": { "type": "string", "minLength": 1 },
+        "address": { "$ref": "#/$defs/fact" },
+        "current_use": { "$ref": "#/$defs/fact" },
+        "gross_area_sf": { "$ref": "#/$defs/fact" },
+        "market_value": { "$ref": "#/$defs/fact" },
+        "acquisition_date": { "$ref": "#/$defs/fact" },
+        "acquisition_price": { "$ref": "#/$defs/fact" }
+      }
+    },
+    "bhi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "evidence_coverage"],
+      "properties": {
+        "score": { "$ref": "#/$defs/fact" },
+        "evidence_coverage": { "$ref": "#/$defs/fact" },
+        "vitals": { "type": "object", "additionalProperties": { "$ref": "#/$defs/fact" } }
+      }
+    },
+    "operations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "annual_gross_revenue",
+        "annual_operating_expenses",
+        "annual_required_capex",
+        "cash_reserves"
+      ],
+      "properties": {
+        "annual_gross_revenue": { "$ref": "#/$defs/fact" },
+        "annual_operating_expenses": { "$ref": "#/$defs/fact" },
+        "annual_required_capex": { "$ref": "#/$defs/fact" },
+        "cash_reserves": { "$ref": "#/$defs/fact" }
+      }
+    },
+    "debt": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["loan_id", "current_balance", "maturity_date", "annual_debt_service"],
+        "properties": {
+          "loan_id": { "type": "string", "minLength": 1 },
+          "original_principal": { "$ref": "#/$defs/fact" },
+          "current_balance": { "$ref": "#/$defs/fact" },
+          "maturity_date": { "$ref": "#/$defs/fact" },
+          "annual_debt_service": { "$ref": "#/$defs/fact" },
+          "current_all_in_rate_pct": { "$ref": "#/$defs/fact" },
+          "debt_signal_state": { "$ref": "#/$defs/fact" }
+        }
+      }
+    },
+    "leases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tenant_id", "tenant_name", "leased_area_sf", "annual_base_rent", "lease_end"],
+        "properties": {
+          "tenant_id": { "type": "string", "minLength": 1 },
+          "tenant_name": { "$ref": "#/$defs/fact" },
+          "industry": { "$ref": "#/$defs/fact" },
+          "leased_area_sf": { "$ref": "#/$defs/fact" },
+          "annual_base_rent": { "$ref": "#/$defs/fact" },
+          "lease_end": { "$ref": "#/$defs/fact" },
+          "renewal_probability_range": { "$ref": "#/$defs/fact" },
+          "business_health": { "$ref": "#/$defs/fact" },
+          "ai_space_demand_exposure": { "$ref": "#/$defs/fact" },
+          "public_distress_events": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/fact" }
+          }
+        }
+      }
+    },
+    "scenario_assumptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["horizons_months", "scenarios", "underwriting"],
+      "properties": {
+        "horizons_months": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "scenarios": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["improving", "base", "adverse"],
+          "properties": {
+            "improving": { "$ref": "#/$defs/scenario" },
+            "base": { "$ref": "#/$defs/scenario" },
+            "adverse": { "$ref": "#/$defs/scenario" }
+          }
+        },
+        "underwriting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_ltv",
+            "minimum_dscr",
+            "dscr_watch",
+            "lease_rollover_warning_pct",
+            "tenant_concentration_warning_pct",
+            "refinance_gap_critical_pct"
+          ],
+          "properties": {
+            "max_ltv": { "type": "number", "minimum": 0, "maximum": 1 },
+            "minimum_dscr": { "type": "number", "minimum": 0 },
+            "dscr_watch": { "type": "number", "minimum": 0 },
+            "lease_rollover_warning_pct": { "type": "number", "minimum": 0, "maximum": 1 },
+            "tenant_concentration_warning_pct": { "type": "number", "minimum": 0, "maximum": 1 },
+            "refinance_gap_critical_pct": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "reuse_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_use", "physical_fit", "regulatory_fit", "market_fit", "financial_fit"],
+        "properties": {
+          "candidate_use": { "type": "string", "minLength": 1 },
+          "physical_fit": { "$ref": "#/$defs/fact" },
+          "regulatory_fit": { "$ref": "#/$defs/fact" },
+          "market_fit": { "$ref": "#/$defs/fact" },
+          "financial_fit": { "$ref": "#/$defs/fact" },
+          "required_next_evidence": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence_label"],
+      "properties": {
+        "value": {},
+        "evidence_label": {
+          "enum": ["KNOWN", "OBSERVED", "INFERRED", "UNKNOWN", "INSUFFICIENT_EVIDENCE"]
+        },
+        "source_ref": { "type": "string", "minLength": 1 },
+        "observed_at": { "type": "string", "format": "date" },
+        "limitations": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evidence_label": { "enum": ["KNOWN", "OBSERVED", "INFERRED"] }
+            }
+          },
+          "then": { "required": ["source_ref"] }
+        }
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "renewal_case",
+        "annual_rent_growth_pct",
+        "annual_expense_growth_pct",
+        "annual_value_change_pct",
+        "refinance_interest_rate_pct",
+        "existing_debt_service_change_pct",
+        "annual_bhi_change_points"
+      ],
+      "properties": {
+        "renewal_case": { "enum": ["low", "mid", "high"] },
+        "annual_rent_growth_pct": { "type": "number" },
+        "annual_expense_growth_pct": { "type": "number" },
+        "annual_value_change_pct": { "type": "number" },
+        "refinance_interest_rate_pct": { "type": "number", "minimum": 0 },
+        "existing_debt_service_change_pct": { "type": "number" },
+        "annual_bhi_change_points": { "type": "number" }
+      }
+    }
+  }
+}

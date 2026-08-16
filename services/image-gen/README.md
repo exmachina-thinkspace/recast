@@ -134,10 +134,13 @@ Until there is headroom, build against `hosted` -- the API is identical.
 
 - `NVIDIA_API_KEY` from build.nvidia.com (free credits). Keep it in your shell,
   not in the repo (`.gitignore` already blocks `.env`, `*secret*`, `*-key.md`).
-- Inline reference images must be small (NVIDIA rejects inline base64 above
-  roughly 180 KB). With Pillow installed the client downsizes automatically;
-  without it, send a small PNG. Larger uploads need NVIDIA's asset-upload flow,
-  which is not implemented here (not needed on the local NIM).
+- NVIDIA's hosted FLUX.1-dev preview accepts only its predefined reference
+  images (`data:image/png;example_id,0` through `3`) for depth/canny requests;
+  it does not accept an arbitrary uploaded room as inline base64. When the
+  frontend supplies a room photo and hosted is the only available backend,
+  the adapter safely falls back to text-guided `base` mode using the room's
+  vision description. Run the local depth/canny NIM to preserve the actual
+  uploaded geometry.
 - `cfg_scale` must be 1 < x <= 9 and `steps` 5–100 on hosted; the client
   clamps steps and uses defaults inside that range.
 - Hosted returns JPEG; the local NIM returns PNG or JPEG. `r.mime` / `j.mime`

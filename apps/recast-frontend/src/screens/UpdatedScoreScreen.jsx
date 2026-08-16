@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Logo, ProgressBar, Pill } from '../components.jsx';
+import { Logo, ProgressBar } from '../components.jsx';
 import { getBuildingDetail } from '../api.js';
 
 // Honest note on scope: this re-fetches the building's current real score
@@ -17,16 +17,17 @@ export default function UpdatedScoreScreen({ buildingId, beforeScore, onBackToMa
   }, [buildingId]);
 
   return (
-    <div className="screen">
-      <Logo />
+    <div className="screen updated-screen">
+      <header className="screen-header"><Logo /><div className="record-id">SYNTHESIS / CURRENT</div></header>
       <ProgressBar step={4} />
-      <Pill tone="blue">📊 Current score</Pill>
-      <h1 className="headline">Here's the full picture, records and evidence combined.</h1>
-      <p className="subhead">Public records were only part of the story. Score reflects the latest evidence on file for this building.</p>
+      <div className="eyebrow"><span>05</span> EVIDENCE SYNTHESIS</div>
+      <h1 className="headline">One building.<br /><em>The full picture.</em></h1>
+      <p className="subhead">The current score combines the records baseline with the latest evidence on file.</p>
 
-      {error && <p className="subhead" style={{ color: '#c0392b' }}>{error}</p>}
+      {error && <div className="system-alert"><span>!</span> {error}</div>}
 
-      <div className="card">
+      <div className="card synthesis-card">
+        <div className="synthesis-rings" aria-hidden="true"><i /><i /><i /></div>
         <div className="before-after">
           <div className="before">
             <div className="val">{beforeScore != null ? Math.round(beforeScore) : '—'}</div>
@@ -45,7 +46,7 @@ export default function UpdatedScoreScreen({ buildingId, beforeScore, onBackToMa
         </p>
       </div>
 
-      <button className="btn ghost block" onClick={onBackToMap}>↺ Back to the map</button>
+      <button className="btn ghost block" onClick={onBackToMap}><span>Return to city view</span><b aria-hidden="true">↺</b></button>
     </div>
   );
 }

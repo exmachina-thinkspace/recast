@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://recast.local/schemas/trajectory-output.schema.json",
+  "title": "Recast Building Trajectory Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "building_id",
+    "as_of_date",
+    "methodology",
+    "current_snapshot",
+    "scenarios",
+    "reuse_screen",
+    "recommendations",
+    "evidence_gaps",
+    "challenge_notes",
+    "review_status"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "building_id": { "type": "string" },
+    "as_of_date": { "type": "string", "format": "date" },
+    "methodology": { "type": "object" },
+    "current_snapshot": { "type": "object" },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "assumptions", "horizons"],
+        "properties": {
+          "name": { "enum": ["improving", "base", "adverse"] },
+          "assumptions": { "type": "object" },
+          "horizons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "horizon_months",
+                "horizon_date",
+                "financial_stress_state",
+                "flags",
+                "evidence_label"
+              ],
+              "properties": {
+                "horizon_months": { "type": "integer" },
+                "horizon_date": { "type": "string", "format": "date" },
+                "financial_stress_state": {
+                  "enum": ["STABLE", "WATCH", "HIGH", "CRITICAL", "INSUFFICIENT_EVIDENCE"]
+                },
+                "flags": { "type": "array", "items": { "type": "string" } },
+                "evidence_label": {
+                  "enum": ["INFERRED", "INSUFFICIENT_EVIDENCE"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "reuse_screen": { "type": "array", "items": { "type": "object" } },
+    "recommendations": { "type": "array", "items": { "type": "object" } },
+    "evidence_gaps": { "type": "array", "items": { "type": "object" } },
+    "challenge_notes": { "type": "array", "items": { "type": "string" } },
+    "review_status": { "enum": ["DEMO_ONLY", "REVIEW_REQUIRED", "READY_FOR_HUMAN_REVIEW"] }
+  }
+}

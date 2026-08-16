@@ -10,6 +10,7 @@ const DEFAULT_HOST = window.location.hostname;
 export const API = {
   buildings: `http://${DEFAULT_HOST}:8900`,
   agent: `http://${DEFAULT_HOST}:8601`,
+  imagegen: `http://${DEFAULT_HOST}:8602`,
 };
 
 export const CITY_VIEW_URL = `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
@@ -37,6 +38,12 @@ export async function askAgent(message) {
   return data; // { answer, tool_trace }
 }
 
+export async function getAgentHealth() {
+  const res = await fetch(`${API.agent}/health`);
+  if (!res.ok) throw new Error('agent service unavailable');
+  return res.json();
+}
+
 export async function transcribe(blob) {
   const res = await fetch(`${API.agent}/transcribe`, { method: 'POST', body: blob });
   const data = await res.json();
@@ -49,4 +56,63 @@ export async function analyzeImage(file) {
   const data = await res.json();
   if (data.error) throw new Error(data.error);
   return data; // { description, source }
+}
+
+export function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('failed to read image'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function getImageGenHealth() {
+  const res = await fetch(`${API.imagegen}/health`);
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.error || 'image generation service unavailable');
+  return data;
+}
+
+export async function generateReuseImage({
+  building,
+  currentUse,
+  proposedUse,
+  extras = '',
+  image,
+  seed = 0,
+  backend = 'auto',
+}) {
+  if (!proposedUse?.trim()) throw new Error('describe what the space should become');
+  const body = {
+    building: building || 'the selected building',
+    current_use: currentUse || 'an underused room',
+    proposed_use: proposedUse.trim(),
+    extras,
+    mode: image ? 'depth' : 'base',
+    width: 1024,
+    height: 1024,
+    steps: 30,
+    seed,
+    backend,
+  };
+  if (image) body.image = typeof image === 'string' ? image : await fileToDataUrl(image);
+
+  const res = await fetch(`${API.imagegen}/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`image generation returned HTTP ${res.status}`);
+  }
+  if (!res.ok || !data.ok) throw new Error(data.error || 'image generation failed');
+  return {
+    ...data,
+    imageUrl: `data:${data.mime};base64,${data.image_b64}`,
+    proposedUse: proposedUse.trim(),
+  };
 }

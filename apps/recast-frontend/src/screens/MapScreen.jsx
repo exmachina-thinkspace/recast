@@ -1,18 +1,41 @@
-import { useEffect, useState } from 'react';
-import { Logo, scoreColor } from '../components.jsx';
+import { useEffect, useMemo, useState } from 'react';
+import { Logo } from '../components.jsx';
+import { scoreColor } from '../scoreUtils.js';
 import { getBuildings, CITY_VIEW_URL } from '../api.js';
+import seattleStreetMap from '../assets/seattle-street-map.png';
 
-// Flat, dependency-free "map" -- positions pins by normalizing real lat/lon
-// into the bounding box of our building set. No tile provider/API key
-// needed, matching the mockup's clean flat style without adding a mapping
-// library dependency. A link to the full photorealistic 3D view (already
-// built, city-view-3d) is offered for the fuller experience.
-const BOUNDS = { latMin: 47.593, latMax: 47.656, lonMin: -122.368, lonMax: -122.318 };
+// Keep the overview legible: sample eight scored buildings across the full
+// north/south extent, choosing the lowest BHI in each latitude band. Every
+// visible pin still opens the same real building detail flow.
+function prioritySample(buildings, count = 8) {
+  const scored = buildings
+    .filter((building) => building.has_score && Number.isFinite(building.la) && Number.isFinite(building.lo))
+    .sort((a, b) => b.la - a.la);
+  if (scored.length <= count) return scored;
+  const sample = [];
+  for (let index = 0; index < count; index += 1) {
+    const start = Math.floor((index * scored.length) / count);
+    const end = Math.floor(((index + 1) * scored.length) / count);
+    const band = scored.slice(start, Math.max(start + 1, end));
+    sample.push(band.reduce((lowest, building) => building.bhi < lowest.bhi ? building : lowest));
+  }
+  return sample;
+}
 
-function toXY(la, lo) {
-  const x = ((lo - BOUNDS.lonMin) / (BOUNDS.lonMax - BOUNDS.lonMin)) * 100;
-  const y = (1 - (la - BOUNDS.latMin) / (BOUNDS.latMax - BOUNDS.latMin)) * 100;
-  return { x: Math.min(98, Math.max(2, x)), y: Math.min(96, Math.max(4, y)) };
+function positionsFor(buildings) {
+  if (!buildings.length) return new Map();
+  const latitudes = buildings.map((building) => building.la);
+  const longitudes = buildings.map((building) => building.lo);
+  const latMin = Math.min(...latitudes);
+  const latMax = Math.max(...latitudes);
+  const lonMin = Math.min(...longitudes);
+  const lonMax = Math.max(...longitudes);
+  const latSpan = latMax - latMin || 1;
+  const lonSpan = lonMax - lonMin || 1;
+  return new Map(buildings.map((building) => [building.i, {
+    x: 24 + ((building.lo - lonMin) / lonSpan) * 52,
+    y: 12 + (1 - (building.la - latMin) / latSpan) * 76,
+  }]));
 }
 
 export default function MapScreen({ onSelectBuilding }) {
@@ -23,44 +46,56 @@ export default function MapScreen({ onSelectBuilding }) {
     getBuildings().then(setBuildings).catch((e) => setError(e.message));
   }, []);
 
-  return (
-    <div className="screen">
-      <Logo />
-      <h1 className="headline">The Health Score for Every Building.</h1>
-      <p className="subhead">Every building has a score based on real data — public records,
-        satellite imagery, and potentially onsite visits.</p>
+  const scoredCount = buildings?.filter((building) => building.has_score).length || 0;
+  const visibleBuildings = useMemo(() => prioritySample(buildings || []), [buildings]);
+  const positions = useMemo(() => positionsFor(visibleBuildings), [visibleBuildings]);
 
-      {error && <p className="subhead" style={{ color: '#c0392b' }}>Couldn't load buildings: {error}</p>}
+  return (
+    <div className="screen map-screen">
+      <header className="screen-header">
+        <Logo />
+        <div className={`live-status ${error ? 'offline' : ''}`}><span /> {error ? 'LINK OFFLINE' : 'LIVE TWIN'}</div>
+      </header>
+
+      <div className="eyebrow"><span>01</span> CITY INTELLIGENCE</div>
+      <h1 className="headline map-headline">Recast: The health score<br /><em>for every building.</em></h1>
+      <p className="subhead">A living health layer for every building—grounded in public records, imagery, and onsite evidence.</p>
+
+      {error && <div className="system-alert"><span>!</span> Live building telemetry is offline: {error}</div>}
 
       <div className="map-wrap">
-        <div style={{
-          position: 'absolute', inset: 0,
-          background: 'repeating-linear-gradient(0deg, #eef1f5, #eef1f5 39px, #e3e8ee 40px), repeating-linear-gradient(90deg, transparent, transparent 39px, #e3e8ee 40px)',
-        }} />
-        {buildings && buildings.filter(b => b.has_score).map((b) => {
-          const { x, y } = toXY(b.la, b.lo);
+        <img className="seattle-map-image" src={seattleStreetMap} alt="Street map of Seattle and the surrounding waterways" />
+        <div className="map-image-treatment" aria-hidden="true" />
+        <div className="map-hud map-hud--top"><span>SEATTLE / FULL CITY</span><span>PRIORITY VIEW</span></div>
+        {visibleBuildings.map((building) => {
+          const { x, y } = positions.get(building.i);
           return (
-            <div
-              key={b.i}
+            <button
+              key={building.i}
               className="map-pin"
-              style={{ left: x + '%', top: y + '%', background: scoreColor(b.bhi) }}
-              title={b.name}
-              onClick={() => onSelectBuilding(b.i)}
+              style={{ left: x + '%', top: y + '%', '--pin-color': scoreColor(building.bhi) }}
+              title={building.name}
+              onClick={() => onSelectBuilding(building.i)}
+              aria-label={`Explore ${building.name}, Building Health Index ${Math.round(building.bhi)}`}
             >
-              {Math.round(b.bhi)}
-            </div>
+              <span className="pin-drop"><span className="pin-score">{Math.round(building.bhi)}</span></span>
+              <span className="pin-pulse" aria-hidden="true" />
+            </button>
           );
         })}
         {!buildings && !error && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9aa3b0', fontWeight: 700 }}>
-            Loading real scores…
+          <div className="map-loading">
+            <span className="scanner" />
+            Syncing city signals
           </div>
         )}
+        <div className="map-hud map-hud--bottom"><span>BHI / EVIDENCE LAYER</span><span>{buildings ? `${visibleBuildings.length} OF ${scoredCount} SIGNALS` : 'SYNCING'}</span></div>
       </div>
-      <div className="map-hint">👆 Tap a building to explore it</div>
-      <a className="linklike" href={CITY_VIEW_URL} target="_blank" rel="noreferrer" style={{ textAlign: 'center' }}>
-        Open the full photorealistic 3D city view →
+      <div className="map-hint"><span className="gesture-dot" /> Eight priority pins · select one to inspect evidence</div>
+      <a className="btn primary block" href={CITY_VIEW_URL} target="_blank" rel="noreferrer">
+        <span>Enter 3D city view</span><b aria-hidden="true">↗</b>
       </a>
+      <p className="truth-note">Gray does not mean healthy. It means there is not yet enough evidence.</p>
     </div>
   );
 }

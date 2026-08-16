@@ -1,0 +1,353 @@
+{
+  "schema_version": "1.0",
+  "as_of_date": "2026-08-15",
+  "demo_only": true,
+  "building": {
+    "building_id": "SYNTHETIC_DISTRESSED_OFFICE_001",
+    "address": {
+      "value": "100 Example Avenue, Seattle, WA",
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/building"
+    },
+    "current_use": {
+      "value": "office",
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/assessor-use"
+    },
+    "gross_area_sf": {
+      "value": 100000,
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/assessor-area"
+    },
+    "market_value": {
+      "value": 37000000,
+      "evidence_label": "INFERRED",
+      "source_ref": "synthetic://example/appraisal-assumption",
+      "limitations": "Not an appraisal; synthetic example value."
+    },
+    "acquisition_date": {
+      "value": "2019-06-28",
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/deed"
+    },
+    "acquisition_price": {
+      "value": 50000000,
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/deed"
+    }
+  },
+  "bhi": {
+    "score": {
+      "value": 33,
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/bhi-run"
+    },
+    "evidence_coverage": {
+      "value": 0.82,
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/bhi-run"
+    },
+    "vitals": {
+      "financial": {
+        "value": 22,
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/bhi-financial"
+      },
+      "utilization": {
+        "value": 40,
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/bhi-utilization"
+      }
+    }
+  },
+  "operations": {
+    "annual_gross_revenue": {
+      "value": 5200000,
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/trailing-12"
+    },
+    "annual_operating_expenses": {
+      "value": 3500000,
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/trailing-12"
+    },
+    "annual_required_capex": {
+      "value": 600000,
+      "evidence_label": "INFERRED",
+      "source_ref": "synthetic://example/capex-plan"
+    },
+    "cash_reserves": {
+      "value": 1800000,
+      "evidence_label": "KNOWN",
+      "source_ref": "synthetic://example/bank-statement"
+    }
+  },
+  "debt": [
+    {
+      "loan_id": "SYNTHETIC_LOAN_1",
+      "original_principal": {
+        "value": 34000000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/loan-agreement"
+      },
+      "current_balance": {
+        "value": 30000000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/lender-statement"
+      },
+      "maturity_date": {
+        "value": "2027-06-30",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/loan-agreement"
+      },
+      "annual_debt_service": {
+        "value": 2400000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/lender-statement"
+      },
+      "current_all_in_rate_pct": {
+        "value": 6.2,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/lender-statement"
+      },
+      "debt_signal_state": {
+        "value": "MATURITY_KNOWN_NEAR_TERM",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/loan-agreement"
+      }
+    }
+  ],
+  "leases": [
+    {
+      "tenant_id": "SYNTHETIC_ANCHOR",
+      "tenant_name": {
+        "value": "Example Anchor Services",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "industry": {
+        "value": "business services",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/tenant-diligence"
+      },
+      "leased_area_sf": {
+        "value": 45000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "annual_base_rent": {
+        "value": 2700000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "lease_end": {
+        "value": "2027-03-31",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/lease-abstract"
+      },
+      "renewal_probability_range": {
+        "value": { "low": 0.25, "high": 0.55 },
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/renewal-underwriting",
+        "limitations": "Synthetic reviewed scenario range, not tenant intent."
+      },
+      "business_health": {
+        "value": "watch",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/tenant-diligence"
+      },
+      "ai_space_demand_exposure": {
+        "value": "high",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/occupation-review",
+        "limitations": "Exposure flag only; no job-loss inference."
+      },
+      "public_distress_events": []
+    },
+    {
+      "tenant_id": "SYNTHETIC_TENANT_B",
+      "tenant_name": {
+        "value": "Example Regional Design",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "industry": {
+        "value": "professional services",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/tenant-diligence"
+      },
+      "leased_area_sf": {
+        "value": 25000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "annual_base_rent": {
+        "value": 1450000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "lease_end": {
+        "value": "2028-09-30",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/lease-abstract"
+      },
+      "renewal_probability_range": {
+        "value": { "low": 0.45, "high": 0.7 },
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/renewal-underwriting"
+      },
+      "business_health": {
+        "value": "stable",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/tenant-diligence"
+      },
+      "ai_space_demand_exposure": {
+        "value": "medium",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/occupation-review"
+      },
+      "public_distress_events": []
+    },
+    {
+      "tenant_id": "SYNTHETIC_TENANT_C",
+      "tenant_name": {
+        "value": "Example Civic Partner",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "industry": {
+        "value": "civic services",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/tenant-diligence"
+      },
+      "leased_area_sf": {
+        "value": 10000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "annual_base_rent": {
+        "value": 550000,
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/rent-roll"
+      },
+      "lease_end": {
+        "value": "2029-12-31",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/lease-abstract"
+      },
+      "renewal_probability_range": {
+        "value": { "low": 0.55, "high": 0.8 },
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/renewal-underwriting"
+      },
+      "business_health": {
+        "value": "stable",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/tenant-diligence"
+      },
+      "ai_space_demand_exposure": {
+        "value": "low",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/occupation-review"
+      },
+      "public_distress_events": []
+    }
+  ],
+  "scenario_assumptions": {
+    "horizons_months": [12, 24, 36],
+    "scenarios": {
+      "improving": {
+        "renewal_case": "high",
+        "annual_rent_growth_pct": 2,
+        "annual_expense_growth_pct": 2.5,
+        "annual_value_change_pct": 2,
+        "refinance_interest_rate_pct": 5.5,
+        "existing_debt_service_change_pct": 0,
+        "annual_bhi_change_points": 1
+      },
+      "base": {
+        "renewal_case": "mid",
+        "annual_rent_growth_pct": 0,
+        "annual_expense_growth_pct": 3.5,
+        "annual_value_change_pct": -2,
+        "refinance_interest_rate_pct": 6.5,
+        "existing_debt_service_change_pct": 1,
+        "annual_bhi_change_points": -2
+      },
+      "adverse": {
+        "renewal_case": "low",
+        "annual_rent_growth_pct": -3,
+        "annual_expense_growth_pct": 5,
+        "annual_value_change_pct": -7,
+        "refinance_interest_rate_pct": 8,
+        "existing_debt_service_change_pct": 3,
+        "annual_bhi_change_points": -5
+      }
+    },
+    "underwriting": {
+      "max_ltv": 0.65,
+      "minimum_dscr": 1.25,
+      "dscr_watch": 1.4,
+      "lease_rollover_warning_pct": 0.25,
+      "tenant_concentration_warning_pct": 0.35,
+      "refinance_gap_critical_pct": 0.1
+    }
+  },
+  "reuse_candidates": [
+    {
+      "candidate_use": "renewed_commercial_multi_tenant",
+      "physical_fit": {
+        "value": "pass",
+        "evidence_label": "OBSERVED",
+        "source_ref": "synthetic://example/site-observation"
+      },
+      "regulatory_fit": {
+        "value": "pass",
+        "evidence_label": "KNOWN",
+        "source_ref": "synthetic://example/zoning-review"
+      },
+      "market_fit": {
+        "value": "conditional",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/market-screen"
+      },
+      "financial_fit": {
+        "value": "conditional",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/concept-underwriting"
+      },
+      "required_next_evidence": [
+        "Floor-by-floor test fits",
+        "Broker demand interviews",
+        "TI and leasing commission budget"
+      ]
+    },
+    {
+      "candidate_use": "education_or_civic",
+      "physical_fit": {
+        "value": "conditional",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/site-screen"
+      },
+      "regulatory_fit": {
+        "value": "conditional",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/zoning-screen"
+      },
+      "market_fit": {
+        "value": "conditional",
+        "evidence_label": "INFERRED",
+        "source_ref": "synthetic://example/market-screen"
+      },
+      "financial_fit": {
+        "value": null,
+        "evidence_label": "INSUFFICIENT_EVIDENCE"
+      },
+      "required_next_evidence": [
+        "Named operator and program",
+        "Occupancy/code concept review",
+        "Capital and subsidy plan"
+      ]
+    }
+  ]
+}

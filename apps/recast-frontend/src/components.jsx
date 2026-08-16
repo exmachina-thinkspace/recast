@@ -2,14 +2,12 @@ export function Logo() {
   return (
     <div className="brand">
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-        <rect x="4" y="3" width="16" height="18" rx="2" stroke="#14171f" strokeWidth="2" />
-        <rect x="7" y="6" width="3" height="3" fill="#14171f" />
-        <rect x="14" y="6" width="3" height="3" fill="#14171f" />
-        <rect x="7" y="11" width="3" height="3" fill="#14171f" />
-        <rect x="14" y="11" width="3" height="3" fill="#14171f" />
-        <rect x="10" y="16" width="4" height="5" fill="#14171f" />
+        <path d="M5 20V6l7-3 7 3v14" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+        <path d="m5 6 7 3 7-3M12 9v12M3 21h18" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M8 10.8v2M8 15.5v2M16 10.8v2M16 15.5v2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       </svg>
-      Recast
+      <span>RECAST</span>
+      <i aria-hidden="true" />
     </div>
   );
 }
@@ -32,17 +30,46 @@ export function Pill({ tone = 'blue', children, onClick }) {
   );
 }
 
-export function scoreColor(bhi) {
-  if (bhi === null || bhi === undefined) return '#9aa3b0';
-  if (bhi < 20) return '#c0392b';
-  if (bhi < 40) return '#e2712b';
-  if (bhi < 60) return '#d9a51b';
-  if (bhi < 80) return '#2f9e4f';
-  return '#14b866';
-}
-
-export function evidenceTierNote(coverage) {
-  if (coverage >= 0.8) return { label: 'Strong evidence', tone: 'green' };
-  if (coverage >= 0.4) return { label: 'Partial evidence', tone: 'blue' };
-  return { label: 'Insufficient evidence', tone: 'neutral' };
+export function ReuseImagePanel({
+  result,
+  sourcePreview,
+  busy = false,
+  error,
+  proposedUse,
+  onGenerate,
+  disabled = false,
+}) {
+  const visual = result?.imageUrl || sourcePreview;
+  return (
+    <div className={`future-image-panel ${result ? 'has-result' : ''}`}>
+      <div className="future-image-stage">
+        {visual ? (
+          <img
+            src={visual}
+            alt={result ? `Concept visualization: ${proposedUse}` : 'Uploaded room reference'}
+          />
+        ) : (
+          <div className="future-image-empty" aria-hidden="true"><i /><i /><span>IMAGE / FUTURE</span></div>
+        )}
+        <div className="future-image-hud">
+          <span>{result ? 'GENERATED FUTURE' : sourcePreview ? 'SOURCE SPACE' : 'VISUAL PIPELINE'}</span>
+          <span>{result?.mode === 'depth' ? 'STRUCTURE / PRESERVED' : result ? 'CONCEPT / BASE' : 'STANDBY'}</span>
+        </div>
+        {busy && <div className="future-image-loading"><span className="scanner" /> Rendering adaptive reuse</div>}
+      </div>
+      {result && (
+        <div className="future-image-meta">
+          <span>{result.backend}</span><span>{result.width}×{result.height}</span><span>seed {result.seed}</span><span>{result.elapsed_s}s</span>
+        </div>
+      )}
+      {result?.notice && <div className="pipeline-note"><span>i</span>{result.notice}</div>}
+      {error && <div className="system-alert compact"><span>!</span> {error}</div>}
+      {onGenerate && (
+        <button className="btn ghost block image-action" disabled={disabled || busy} onClick={onGenerate}>
+          <span>{result ? 'Regenerate image' : 'Generate reuse image'}</span><b aria-hidden="true">{busy ? '•••' : '↗'}</b>
+        </button>
+      )}
+      <p className="truth-note image-truth">Concept visualization only. Physical, regulatory, market, and financial fit still require review.</p>
+    </div>
+  );
 }

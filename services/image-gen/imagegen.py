@@ -37,8 +37,7 @@ CLI:
   python3 imagegen.py --recast "Lake Union Building" "vacant office floor" "apartments"
 
 Stdlib only (urllib/json/base64). Pillow is optional -- if present, reference
-photos are converted to PNG and downscaled for the hosted backend's inline
-size limit; without it, pass PNGs.
+photos are converted to PNG before they are sent to a local NIM.
 """
 import os
 import io
@@ -57,10 +56,6 @@ HOSTED_URL = "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev"
 VALID_MODES = ("base", "depth", "canny")
 # FLUX.1-dev NIM accepts these edge lengths (multiples of 64 in 768..1344).
 VALID_SIZES = (768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280, 1344)
-# build.nvidia.com rejects inline base64 images above roughly this size;
-# bigger inputs need the NVCF asset-upload flow (not implemented here).
-HOSTED_INLINE_IMAGE_LIMIT = 170_000
-
 TIMEOUT_S = 300
 
 
@@ -78,6 +73,7 @@ class ImageResult:
     height: int
     steps: int
     cfg_scale: float
+    notice: Optional[str] = None
 
     @property
     def ext(self) -> str:
@@ -146,7 +142,7 @@ def _snap_size(v: int, name: str) -> int:
     return snapped
 
 
-def _load_reference_image(image, for_hosted: bool) -> str:
+def _load_reference_image(image) -> str:
     """Return a data URL for the depth/canny reference image.
 
     `image` may be a path, raw bytes, or an existing data: URL / base64 string.
@@ -171,23 +167,14 @@ def _load_reference_image(image, for_hosted: bool) -> str:
     try:
         from PIL import Image  # optional
         im = Image.open(io.BytesIO(raw)).convert("RGB")
-        limit = HOSTED_INLINE_IMAGE_LIMIT if for_hosted else None
-        # NIM wants PNG; hosted wants PNG *and* small. Downscale until it fits.
-        while True:
-            buf = io.BytesIO()
-            im.save(buf, format="PNG", optimize=True)
-            raw = buf.getvalue()
-            if limit is None or len(raw) <= limit or max(im.size) <= 256:
-                break
-            im = im.resize((int(im.width * 0.8), int(im.height * 0.8)))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG", optimize=True)
+        raw = buf.getvalue()
         mime = "image/png"
     except ImportError:
         if mime != "image/png":
             sys.stderr.write("[imagegen] warning: reference image is not PNG and Pillow "
-                             "is not installed; sending as-is. Prefer PNG.\n")
-        if for_hosted and len(raw) > HOSTED_INLINE_IMAGE_LIMIT:
-            sys.stderr.write(f"[imagegen] warning: image is {len(raw)//1024} KB; the hosted "
-                             f"endpoint may reject inline images over ~{HOSTED_INLINE_IMAGE_LIMIT//1024} KB\n")
+                             "is not installed; sending as-is to the local NIM. Prefer PNG.\n")
     return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
 
 
@@ -276,23 +263,49 @@ def generate(prompt: str,
         raise ImageGenError(f"mode must be one of {VALID_MODES}")
     if mode != "base" and image is None:
         raise ImageGenError(f"mode={mode} needs a reference image")
-    if cfg_scale is None:
-        cfg_scale = 3.5 if mode == "base" else 7.0
     steps = max(5, min(100, int(steps)))
     width, height = _snap_size(width, "width"), _snap_size(height, "height")
     backend = resolve_backend(backend, nim_url)
 
+    # The build.nvidia.com preview API accepts only NVIDIA's predefined
+    # example references (0..3), not arbitrary uploaded base64 images. Never
+    # substitute a sample image for the user's room: fall back to text-guided
+    # base generation. The prompt already contains the room's vision analysis.
+    # A local NIM still receives the real room and preserves its structure.
+    effective_mode = mode
+    effective_image = image
+    notice = None
+    hosted_example = (
+        isinstance(image, str)
+        and image in {f"data:image/png;example_id,{i}" for i in range(4)}
+    )
+    if backend == "hosted" and image is not None and not hosted_example:
+        effective_mode = "base"
+        effective_image = None
+        notice = (
+            "Hosted NVIDIA preview cannot apply arbitrary uploaded room images; "
+            "this concept uses the room analysis and prompt. Start the local depth NIM "
+            "to preserve the uploaded room geometry."
+        )
+        sys.stderr.write("[imagegen] hosted preview requires example_id references; "
+                         "using text-guided base mode for the uploaded room\n")
+
+    if cfg_scale is None:
+        cfg_scale = 3.5 if effective_mode == "base" else 7.0
+
     payload = {
         "prompt": prompt.strip(),
-        "mode": mode,
+        "mode": effective_mode,
         "width": width,
         "height": height,
         "cfg_scale": float(cfg_scale),
         "seed": int(seed),
         "steps": steps,
     }
-    if image is not None:
-        payload["image"] = _load_reference_image(image, for_hosted=(backend == "hosted"))
+    if effective_image is not None:
+        payload["image"] = _load_reference_image(effective_image)
+        if backend == "nim" and effective_mode in ("depth", "canny"):
+            payload["preprocess_image"] = True
 
     if backend == "hosted":
         url = HOSTED_URL
@@ -323,8 +336,8 @@ def generate(prompt: str,
     return ImageResult(
         image_bytes=img, mime=_sniff_mime(img), seed=int(art.get("seed", seed)),
         finish_reason=finish, backend=backend, elapsed_s=round(elapsed, 2),
-        prompt=payload["prompt"], mode=mode, width=width, height=height,
-        steps=steps, cfg_scale=float(cfg_scale),
+        prompt=payload["prompt"], mode=effective_mode, width=width, height=height,
+        steps=steps, cfg_scale=float(cfg_scale), notice=notice,
     )
 
 
