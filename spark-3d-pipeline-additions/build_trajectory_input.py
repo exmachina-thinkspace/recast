@@ -85,6 +85,14 @@ def physical_fit_for(use, total_sqft, room_count, ceilings):
         return "fail", "Mean measured room size (%.0f sqft) is far below a standard classroom footprint; would need extensive wall removal." % mean_room
     if use == "retail/mall":
         return "conditional", "A minority of measured rooms (large open areas) fit retail scale; most of the floor plate does not."
+    if use == "medical/clinic":
+        # Outpatient exam rooms are typically ~100-150 sqft; the measured
+        # mean room size here comfortably covers that scale, but per-room
+        # plumbing (sinks) and ADA-width corridors aren't knowable from
+        # plan geometry alone -- conditional, not pass.
+        ok = mean_room >= 100
+        return ("conditional" if ok else "fail"), \
+            "Mean measured room size (%.0f sqft) comfortably covers typical outpatient exam-room scale (100-150 sqft), but per-room plumbing and ADA corridor width aren't knowable from plan geometry alone." % mean_room
     return "unknown", "No physical-fit assessment run for this use."
 
 
@@ -157,7 +165,7 @@ def build():
         "reuse_candidates": [],
     }
 
-    for use in ("office (as-is)", "multifamily/residential", "school/classroom", "retail/mall"):
+    for use in ("office (as-is)", "multifamily/residential", "medical/clinic", "school/classroom", "retail/mall"):
         pf_val, pf_note = physical_fit_for(use, total_sqft, room_count, ceilings)
         payload["reuse_candidates"].append({
             "candidate_use": use,

@@ -17,6 +17,7 @@ export const API = {
   agent: trimTrailingSlash(import.meta.env.VITE_AGENT_API_URL) || `http://${DEFAULT_HOST}:8601`,
   imagegen: trimTrailingSlash(import.meta.env.VITE_IMAGEGEN_API_URL) || `http://${DEFAULT_HOST}:8602`,
   lensBridge: trimTrailingSlash(import.meta.env.VITE_LENS_BRIDGE_URL) || (window.location.protocol === 'https:' ? '' : `http://${DEFAULT_HOST}:8910`),
+  digitalTwin: trimTrailingSlash(import.meta.env.VITE_DIGITAL_TWIN_URL) || `http://${DEFAULT_HOST}:8611`,
 };
 
 export const CITY_VIEW_URL = trimTrailingSlash(import.meta.env.VITE_CITY_VIEW_URL) || `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
@@ -32,6 +33,30 @@ export async function getBuildingDetail(i) {
   const res = await fetch(`${API.buildings}/api/buildings/${i}`);
   if (!res.ok) throw new Error('failed to load building detail');
   return res.json();
+}
+
+export async function getFloorplan() {
+  const res = await fetch(`${API.buildings}/api/buildings/hero/floorplan`);
+  if (!res.ok) throw new Error('failed to load floor plan');
+  return res.json(); // { building, levels: [{ level, image_url, width_px, height_px, extent_ft }] }
+}
+
+export async function getReuseScreen() {
+  const res = await fetch(`${API.agent}/reuse-screen`, { method: 'POST' });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data; // { reuse_screen: [{ candidate_use, status, fit, required_next_evidence, limitation }], evidence_gap_count, note }
+}
+
+export async function getReuseDetail(candidateUse) {
+  const res = await fetch(`${API.agent}/reuse-detail`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ candidate_use: candidateUse }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data; // { candidate_use, status, physical, regulatory, market, financial, changes_needed, limitation }
 }
 
 export async function askAgent(message) {
@@ -155,6 +180,22 @@ export async function interpretLensFrame(question = 'What am I seeing in this Re
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || 'vision interpretation failed');
   return data;
+}
+
+export async function getDigitalTwinStatus() {
+  const res = await fetch(`${API.digitalTwin}/status`);
+  if (!res.ok) throw new Error('digital twin launcher unavailable');
+  return res.json(); // { app_running, bridge_running, devices, note }
+}
+
+export async function startDigitalTwin() {
+  const res = await fetch(`${API.digitalTwin}/start`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    const detail = data?.bridge?.error || data?.app?.error || data?.bridge?.stderr || data?.app?.stderr;
+    throw new Error(detail || 'failed to start the digital twin pipeline');
+  }
+  return data; // { ok, bridge, app }
 }
 
 export async function detectLensObjects() {

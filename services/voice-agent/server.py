@@ -52,7 +52,14 @@ SYSTEM_PROMPT = (
     "evidence, say so plainly. Use the approved vocabulary: potentially "
     "underused not vacant, observed low activity not empty, insufficient "
     "evidence not a guessed low score. Keep answers to 2-3 sentences -- "
-    "this is a spoken voice response, not a written report."
+    "this is a spoken voice response, not a written report. Always respond "
+    "in English, regardless of the language, script, or content of the "
+    "user's message. If asked broadly to recommend a reuse for a space "
+    "without a specific use named (e.g. 'what should I do with this room'), "
+    "call run_reuse_screening at most once for a grounded overview, keep "
+    "your answer short, and tell the user to pick a specific use from the "
+    "interface's picker for a detailed fact-check and concept image -- do "
+    "not try to evaluate every candidate yourself in text."
 )
 MAX_TOOL_ROUNDS = 4
 
@@ -129,6 +136,22 @@ def _vllm_call(messages, tools=None):
         return json.load(r)
 
 
+_RAW_TOOL_CALL_MARKERS = ("<tool_call>", "<function=", "</tool_call>", "<|tool_call|>")
+
+
+def _clean_final_text(text):
+    """Defensive guard: if the model (e.g. mid-crash, or a parser mismatch on
+    this vLLM build) fails to emit a properly-parsed tool call and instead
+    leaks the raw tool-call syntax as plain content, never show that to the
+    user -- it's confusing, looks broken, and isn't a real answer. Replace it
+    with an honest, generic fallback instead."""
+    text = text or ""
+    if any(marker in text for marker in _RAW_TOOL_CALL_MARKERS):
+        return ("I wasn't able to finish that lookup cleanly -- the agent's "
+                "response got malformed internally. Please try asking again.")
+    return text
+
+
 def run_agent_turn(user_message):
     """Real tool-calling loop: the model can call get_bhi/search_crime/
     search_permits/search_businesses (see agent_tools.py), see the real
@@ -146,7 +169,7 @@ def run_agent_turn(user_message):
         msg = resp["choices"][0]["message"]
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
-            return msg.get("content") or "(no response)", trace
+            return _clean_final_text(msg.get("content")) or "(no response)", trace
         messages.append({"role": "assistant", "content": msg.get("content") or "",
                           "tool_calls": tool_calls})
         for tc in tool_calls:
@@ -161,7 +184,7 @@ def run_agent_turn(user_message):
                               "content": json.dumps(result)})
     # ran out of rounds -- force a final answer from what we have
     resp = _vllm_call(messages)
-    return resp["choices"][0]["message"].get("content") or "(no response)", trace
+    return _clean_final_text(resp["choices"][0]["message"].get("content")) or "(no response)", trace
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -234,6 +257,32 @@ class Handler(BaseHTTPRequestHandler):
                 message = body.get("message", "")
                 answer, trace = run_agent_turn(message)
                 self._send_json(200, {"answer": answer, "tool_trace": trace})
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+
+        elif self.path == "/reuse-detail":
+            # Deterministic, single-candidate fact-check -- real fit reasoning
+            # per dimension plus what changes/evidence would be needed. No
+            # LLM round-trip for the base facts (reliable even if vLLM is
+            # unhealthy); the frontend layers an optional LLM narration on top.
+            try:
+                body = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                body = {}
+            try:
+                result = agent_tools.call_tool("get_reuse_detail", {"candidate_use": body.get("candidate_use")})
+                self._send_json(200 if "error" not in result else 400, result)
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+
+        elif self.path == "/reuse-screen":
+            # Deterministic reuse-candidate screening, no LLM round-trip --
+            # the frontend needs a reliable structured list to render as
+            # selectable cards, not prose the model might phrase differently
+            # each time (or fail to tool-call correctly on a shaky vLLM).
+            try:
+                result = agent_tools.call_tool("run_reuse_screening", {})
+                self._send_json(200 if "error" not in result else 500, result)
             except Exception as e:
                 self._send_json(500, {"error": str(e)})
 

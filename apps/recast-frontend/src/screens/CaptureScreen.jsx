@@ -316,11 +316,11 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     holdingToRecordRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!holdingToRecordRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        setError('Hold the microphone button while permission is granted, then speak for at least one second.');
-        return;
-      }
+      // Note: don't abort here if holdingToRecordRef went false while we were
+      // awaiting the permission prompt -- the browser's native dialog can
+      // fire a pointercancel on the held button while it has focus, which is
+      // not the user releasing early. The elapsed/size check below already
+      // catches genuinely too-short recordings.
       chunksRef.current = [];
       const supportedMime = [
         'audio/webm;codecs=opus',

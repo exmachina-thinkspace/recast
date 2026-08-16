@@ -46,6 +46,13 @@ def _load_city_data():
     return _cache["B"], _cache["BV"]
 
 
+def _is_hero(b):
+    """The hero building (1700 Westlake / Lake Union Building) is the only
+    one with real measured floor-plan/room geometry and trajectory-engine
+    coverage -- the other 124 are records-only."""
+    return "1700 westlake" in (b.get("a") or "").lower()
+
+
 def resolve_building(name_or_address):
     """Fuzzy match against building name or address. Returns None if no
     match -- callers must handle that, never guess a building."""
@@ -143,6 +150,13 @@ TOOL_SCHEMAS = [
             }, "required": []},
         },
     },
+    # Note: get_reuse_detail is intentionally NOT exposed here as an LLM tool.
+    # It's called directly by the frontend's reuse-picker dropdown via the
+    # dedicated /reuse-detail endpoint (see server.py). Exposing it to the
+    # model too invited it to loop through candidates one at a time trying
+    # to "recommend something," burning MAX_TOOL_ROUNDS and sometimes
+    # leaking malformed tool-call text. run_reuse_screening below is the
+    # single-call, no-loop-risk way for the model to ground a broad answer.
     {
         "type": "function",
         "function": {
@@ -176,8 +190,21 @@ def call_tool(name, args):
                         "status": "INSUFFICIENT_EVIDENCE", "note": "no BHI record for this building yet"}
             vitals_summary = {k: {"score": v["score"], "weight": v["weight"], "evidence_coverage": v["evidence_coverage"]}
                                for k, v in bv["vitals"].items()}
-            return {"building": b.get("n") or b["a"], "address": b["a"],
-                    "bhi": bv["bhi"], "evidence_coverage": bv["evidence_coverage"], "vitals": vitals_summary}
+            result = {"building": b.get("n") or b["a"], "address": b["a"],
+                      "bhi": bv["bhi"], "evidence_coverage": bv["evidence_coverage"], "vitals": vitals_summary}
+            if _is_hero(b):
+                result["floorplan_url"] = "/api/buildings/hero/floorplan"
+                if TRAJECTORY_AVAILABLE:
+                    try:
+                        total_sqft, room_count, _ = build_trajectory_input.load_rooms()
+                        result["measured_floor_plan"] = {
+                            "room_count": room_count,
+                            "total_sqft": round(total_sqft),
+                            "source": "extract_plan.py / plan2model.py, real measured architectural plan",
+                        }
+                    except Exception:
+                        pass
+            return result
 
         elif name == "search_crime":
             match = resolve_building(args["building_name"])
@@ -219,6 +246,43 @@ def call_tool(name, args):
 
         elif name == "whats_next_for_building":
             return vision_tools.whats_next(args.get("target_use"))
+
+        elif name == "get_reuse_detail":
+            if not TRAJECTORY_AVAILABLE:
+                return {"error": "trajectory-engine not deployed on this box yet"}
+            candidate_use = args.get("candidate_use")
+            if not candidate_use:
+                return {"error": "candidate_use is required"}
+            try:
+                payload = build_trajectory_input.build()
+                result = analyze_trajectory(payload)
+                screen = next((c for c in result.get("reuse_screen", []) if c["candidate_use"] == candidate_use), None)
+                inputs = next((c for c in payload["reuse_candidates"] if c["candidate_use"] == candidate_use), None)
+                if not screen or not inputs:
+                    valid = [c["candidate_use"] for c in payload.get("reuse_candidates", [])]
+                    return {"error": "unknown candidate_use '%s'; valid options: %s" % (candidate_use, valid)}
+
+                def dim(key):
+                    d = inputs.get(key, {})
+                    return {"tier": screen["fit"].get(key.replace("_fit", "")),
+                            "reasoning": d.get("limitations", "No assessment available."),
+                            "evidence_label": d.get("evidence_label")}
+
+                return {
+                    "candidate_use": candidate_use,
+                    "status": screen["status"],
+                    "physical": dim("physical_fit"),
+                    "regulatory": dim("regulatory_fit"),
+                    "market": dim("market_fit"),
+                    "financial": dim("financial_fit"),
+                    "changes_needed": screen.get("required_next_evidence", []),
+                    "limitation": screen.get("limitation"),
+                    "note": "Real evidence-gated screening (packages/trajectory-engine) over "
+                            "actual measured room geometry and King County/zoning records -- "
+                            "not a fabricated or generic recommendation.",
+                }
+            except Exception as e:
+                return {"error": "trajectory engine failed: %s" % e}
 
         elif name == "run_reuse_screening":
             if not TRAJECTORY_AVAILABLE:

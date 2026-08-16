@@ -6,6 +6,8 @@ import PossibilityScreen from './screens/PossibilityScreen.jsx';
 import UpdatedScoreScreen from './screens/UpdatedScoreScreen.jsx';
 import ChatScreen from './screens/ChatScreen.jsx';
 
+const FLOW = ['map', 'score', 'capture', 'possibility', 'updated'];
+
 function App() {
   const [tab, setTab] = useState('walkthrough');
   const [step, setStep] = useState(() => {

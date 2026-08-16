@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Logo } from '../components.jsx';
 import { scoreColor } from '../scoreUtils.js';
-import { getBuildings, CITY_VIEW_URL } from '../api.js';
+import { getBuildings, getDigitalTwinStatus, startDigitalTwin, CITY_VIEW_URL } from '../api.js';
 import seattleStreetMap from '../assets/seattle-street-map.png';
 
 // Keep the overview legible: sample eight scored buildings across the full
@@ -41,10 +41,39 @@ function positionsFor(buildings) {
 export default function MapScreen({ onSelectBuilding }) {
   const [buildings, setBuildings] = useState(null);
   const [error, setError] = useState(null);
+  const [twinStatus, setTwinStatus] = useState(null);
+  const [twinStarting, setTwinStarting] = useState(false);
+  const [twinError, setTwinError] = useState(null);
 
   useEffect(() => {
     getBuildings().then(setBuildings).catch((e) => setError(e.message));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    function refreshTwinStatus() {
+      getDigitalTwinStatus().then((status) => { if (active) setTwinStatus(status); }).catch(() => { if (active) setTwinStatus(null); });
+    }
+    refreshTwinStatus();
+    const timer = window.setInterval(refreshTwinStatus, 10000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  async function handleStartTwin() {
+    setTwinStarting(true);
+    setTwinError(null);
+    try {
+      await startDigitalTwin();
+      const status = await getDigitalTwinStatus();
+      setTwinStatus(status);
+    } catch (e) {
+      setTwinError(e.message);
+    }
+    setTwinStarting(false);
+  }
+
+  const twinPhoneCount = Array.isArray(twinStatus?.devices?.devices) ? twinStatus.devices.devices.length : 0;
+  const twinLive = Boolean(twinStatus?.app_running || twinStatus?.bridge_running);
 
   const scoredCount = buildings?.filter((building) => building.has_score).length || 0;
   const visibleBuildings = useMemo(() => prioritySample(buildings || []), [buildings]);
@@ -95,6 +124,30 @@ export default function MapScreen({ onSelectBuilding }) {
       <a className="btn primary block" href={CITY_VIEW_URL} target="_blank" rel="noreferrer">
         <span>Enter 3D city view</span><b aria-hidden="true">↗</b>
       </a>
+
+      <div className="digital-twin-card">
+        <div className="digital-twin-card-header">
+          <span>LIVE DIGITAL TWIN</span>
+          <span className={`live-status ${twinLive ? '' : 'offline'}`}><span />{twinLive ? 'LIVE' : 'NOT STARTED'}</span>
+        </div>
+        <p className="digital-twin-card-note">
+          Phone-driven live 3D map of the hero building, generated on the Spark from real floor plans plus phone camera/motion data.
+          {twinLive && ' Renders on the Spark’s own connected display -- not inside this browser.'}
+        </p>
+        {twinStatus && (
+          <div className="digital-twin-card-meta">
+            <span>bridge: {twinStatus.bridge_running ? 'up' : 'down'}</span>
+            <span>desktop app: {twinStatus.app_running ? 'up' : 'down'}</span>
+            <span>{twinPhoneCount} phone{twinPhoneCount === 1 ? '' : 's'} connected</span>
+          </div>
+        )}
+        <button className="btn ghost block" disabled={twinStarting} onClick={handleStartTwin}>
+          <span>{twinStarting ? 'Starting…' : twinLive ? 'Restart live digital twin' : 'Start live digital twin'}</span>
+          <b aria-hidden="true">{twinStarting ? '•••' : '↗'}</b>
+        </button>
+        {twinError && <div className="system-alert compact"><span>!</span> {twinError}</div>}
+      </div>
+
       <p className="truth-note">Gray does not mean healthy. It means there is not yet enough evidence.</p>
     </div>
   );

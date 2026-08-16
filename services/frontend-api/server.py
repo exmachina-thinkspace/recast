@@ -11,6 +11,8 @@ without needing to regex-scrape an HTML file itself.
 Endpoints:
   GET /api/buildings          -> [{i, name, address, la, lo, bhi, evidence_coverage}, ...]
   GET /api/buildings/<i>       -> full building + BV record (all vitals/inputs)
+  GET /api/buildings/hero/floorplan       -> real measured floor-plan metadata + image URLs
+  GET /api/buildings/hero/floorplan/<lvl>.png -> the actual floor-plan PNG (lvl = level1|level2)
   GET /health
 
 Usage:
@@ -25,6 +27,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PLANS = os.path.expanduser("~/plans")
 CITY_VIEW_HTML = os.path.join(PLANS, "city-view-3d", "seattle-office-vitals-3d.html")
+FLOORPLAN_META = os.path.join(PLANS, "floorplan_meta.json")
+FLOORPLAN_PNG = {"level1": os.path.join(PLANS, "level1_floorplan.png"),
+                  "level2": os.path.join(PLANS, "level2_floorplan.png")}
 
 
 def load_city_data():
@@ -45,6 +50,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(payload)
+
+    def _send_png(self, status, path):
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except FileNotFoundError:
+            self._send_json(404, {"error": "floor plan image not found"})
+            return
+        self.send_response(status)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -75,6 +94,32 @@ class Handler(BaseHTTPRequestHandler):
                     "has_score": bv is not None,
                 })
             self._send_json(200, out)
+            return
+
+        if self.path == "/api/buildings/hero/floorplan":
+            try:
+                meta = json.load(open(FLOORPLAN_META, encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                self._send_json(500, {"error": "could not load floorplan_meta.json: %s" % e})
+                return
+            levels = []
+            for lvl, info in meta.items():
+                if lvl not in FLOORPLAN_PNG or not os.path.exists(FLOORPLAN_PNG[lvl]):
+                    continue
+                levels.append({
+                    "level": lvl,
+                    "image_url": "/api/buildings/hero/floorplan/%s.png" % lvl,
+                    "width_px": info.get("width_px"),
+                    "height_px": info.get("height_px"),
+                    "extent_ft": info.get("extent_ft"),
+                    "source": "extract_plan.py / plan2model.py, real measured architectural plan",
+                })
+            self._send_json(200, {"building": "Lake Union Building, 1700 Westlake Ave N", "levels": levels})
+            return
+
+        m2 = re.match(r"^/api/buildings/hero/floorplan/(level[12])\.png$", self.path)
+        if m2:
+            self._send_png(200, FLOORPLAN_PNG[m2.group(1)])
             return
 
         m = re.match(r"^/api/buildings/(\d+)$", self.path)
