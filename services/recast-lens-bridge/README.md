@@ -31,23 +31,45 @@ This is a v1 proof path. It proves Recast-owned iPhone camera ingestion without 
 
 ## Run
 
-On the GN100:
+Run the bridge on the GN100:
 
 ```bash
-cd services/recast-lens-bridge
-python3 server.py --port 8910
+cd ~/recast
+python3 services/recast-lens-bridge/server.py --port 8910
 ```
 
-Open the frontend from the same GN100 host so the browser derives the same host:
+Run the HTTPS frontend/proxy on the GN100 too. The phone should never need to
+call the raw `http://172.16.94.151:8910` bridge directly; it should call the
+GN100 HTTPS frontend and let that process forward same-origin Lens requests to
+`127.0.0.1:8910`:
 
 ```text
-http://172.16.94.151:8800
+iPhone Safari
+  -> https://172.16.94.151:5173
+  -> /api/recast-lens/*
+  -> http://127.0.0.1:8910
 ```
 
-The frontend sends frames to:
+Mac mini hosting is a debugging fallback only. It is not the intended demo
+relay, because it puts the phone, relay, and GN100 bridge on separate machines.
 
-```text
-http://172.16.94.151:8910/api/recast-lens/frame
+Start the GN100 HTTPS frontend/proxy from `apps/recast-frontend`:
+
+```bash
+cd ~/recast/apps/recast-frontend
+npm install
+npm run build
+
+tmux new-session -d -s recast-frontend-https \
+  'cd ~/recast/apps/recast-frontend && \
+   python3 tools/serve_https.py \
+     --host 0.0.0.0 \
+     --port 5173 \
+     --dist dist \
+     --cert .local/certs/recast-lan.crt \
+     --key .local/certs/recast-lan.key \
+     --bridge-host 127.0.0.1 \
+     --bridge-port 8910'
 ```
 
 Browser-camera note:
@@ -56,17 +78,9 @@ iPhone Safari may require a secure context for `getUserMedia`. If the camera doe
 
 If the frontend is served over HTTPS, do not point browser fetches directly at
 `http://172.16.94.151:8910`; Safari may block that as mixed content. The
-frontend dev server supports a same-origin proxy:
-
-```bash
-LENS_BRIDGE_TARGET=http://172.16.94.151:8910 \
-HTTPS_KEY=.local/certs/recast-lan.key \
-HTTPS_CERT=.local/certs/recast-lan.crt \
-npm run dev:lan
-```
-
-With that setup, the phone calls `/api/recast-lens/frame` on the HTTPS frontend
-origin, and Vite forwards to this bridge.
+frontend HTTPS helper supports a same-origin proxy. With that setup, the phone
+calls `/api/recast-lens/frame` on the HTTPS frontend origin, and the helper
+forwards to this bridge.
 
 ## Endpoints
 
@@ -75,6 +89,7 @@ origin, and Vite forwards to this bridge.
 | `/health` | `GET` | Health check |
 | `/viewer` | `GET` | Simple live browser viewer for the latest frame |
 | `/api/recast-lens/frame` | `POST` | Accept one JPEG frame |
+| `/api/recast-lens/sessions` | `GET` | List active iPhone/browser sessions |
 | `/api/recast-lens/status` | `GET` | Return latest session/frame metadata |
 | `/api/recast-lens/latest.jpg` | `GET` | Return latest JPEG frame |
 | `/api/recast-lens/interpret` | `POST` | Ask local NVIDIA vision reasoner to describe the latest frame |
@@ -82,6 +97,11 @@ origin, and Vite forwards to this bridge.
 | `/api/recast-lens/detect-objects` | `POST` | Run local YOLO object detection on the latest frame |
 | `/api/recast-lens/objects` | `GET` | Return latest object detection result |
 | `/api/recast-lens/tracking` | `GET`/`POST` | Read or toggle bridge-owned live object tracking |
+
+Most read/action endpoints accept `?session=<id>` so multiple iPhones can
+stream at once without overwriting each other's status, latest frame,
+interpretation, object detections, or tracking state. The browser capture client
+sends `X-Recast-Session` with every frame upload.
 
 ## View On The GN100
 
