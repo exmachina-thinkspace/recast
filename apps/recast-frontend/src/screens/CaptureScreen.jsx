@@ -185,7 +185,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     if (frameTimerRef.current) window.clearInterval(frameTimerRef.current);
     frameTimerRef.current = null;
     stopLensStatusPolling();
-    setLensObjectTracking(false).catch(() => {});
+    setLensObjectTracking(false, sessionId).catch(() => {});
     trackingRequestedRef.current = false;
     setStreaming(false);
   }
@@ -203,7 +203,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
 
   async function pollLensStatus() {
     try {
-      const data = await getLensStatus();
+      const data = await getLensStatus(sessionId);
       if (data.objects) setObjects(data.objects);
       if (data.tracking) {
         const enabled = Boolean(data.tracking.enabled);
@@ -220,7 +220,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     const next = !liveObjectTracking;
     setDetectingObjects(true);
     try {
-      const data = await setLensObjectTracking(next);
+      const data = await setLensObjectTracking(next, sessionId);
       const enabled = Boolean(data.tracking?.enabled);
       liveObjectTrackingRef.current = enabled;
       trackingRequestedRef.current = enabled;
@@ -255,7 +255,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
         startLensStatusPolling();
         if (liveObjectTrackingRef.current && !trackingRequestedRef.current) {
           trackingRequestedRef.current = true;
-          setLensObjectTracking(true).catch(() => {
+          setLensObjectTracking(true, sessionId).catch(() => {
             trackingRequestedRef.current = false;
           });
         }
@@ -272,7 +272,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     setError(null);
     setInterpretation(null);
     try {
-      const data = await interpretLensFrame();
+      const data = await interpretLensFrame('What am I seeing in this Recast Lens frame?', sessionId);
       setInterpretation(data);
       setBridgeStatus('online');
     } catch (e) {
@@ -289,7 +289,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     if (!quiet) setError(null);
     if (clear) setObjects(null);
     try {
-      const data = await detectLensObjects();
+      const data = await detectLensObjects(sessionId);
       setObjects(data);
       setBridgeStatus('online');
     } catch (e) {

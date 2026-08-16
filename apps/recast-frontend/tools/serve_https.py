@@ -9,9 +9,39 @@ long-running Vite dev process and keeps browser calls same-origin:
 import argparse
 import http.client
 import os
+import socket
 import ssl
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
+
+
+class ThreadedHTTPSServer(ThreadingHTTPServer):
+    """Wrap accepted sockets with TLS inside worker threads.
+
+    Wrapping the listening socket makes TLS handshakes run on the main accept
+    loop. A stalled mobile/browser preconnect can then block every new request.
+    """
+
+    daemon_threads = True
+
+    def __init__(self, server_address, request_handler, ssl_context):
+        self.ssl_context = ssl_context
+        super().__init__(server_address, request_handler)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            request.settimeout(10)
+            tls_request = self.ssl_context.wrap_socket(request, server_side=True)
+        except (OSError, ssl.SSLError, socket.timeout):
+            self.shutdown_request(request)
+            return
+
+        try:
+            self.finish_request(tls_request, client_address)
+        except Exception:
+            self.handle_error(tls_request, client_address)
+        finally:
+            self.shutdown_request(tls_request)
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -97,10 +127,9 @@ def main():
     key = os.path.abspath(args.key)
     os.chdir(dist)
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile=cert, keyfile=key)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server = ThreadedHTTPSServer((args.host, args.port), Handler, context)
 
     print(f"[recast-frontend] https://{args.host}:{args.port}")
     print(f"[recast-frontend] proxy -> http://{args.bridge_host}:{args.bridge_port}")

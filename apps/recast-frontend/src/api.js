@@ -22,6 +22,12 @@ export const API = {
 export const CITY_VIEW_URL = trimTrailingSlash(import.meta.env.VITE_CITY_VIEW_URL) || `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
 export const FRONTEND_ORIGIN = DEFAULT_ORIGIN;
 
+function withSession(path, sessionId) {
+  if (!sessionId) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}session=${encodeURIComponent(sessionId)}`;
+}
+
 export async function getBuildings() {
   const res = await fetch(`${API.buildings}/api/buildings`);
   if (!res.ok) throw new Error('failed to load buildings');
@@ -131,18 +137,18 @@ export async function getLensBridgeHealth() {
   return data;
 }
 
-export async function getLensStatus() {
-  const res = await fetch(`${API.lensBridge}/api/recast-lens/status`);
+export async function getLensStatus(sessionId) {
+  const res = await fetch(`${API.lensBridge}${withSession('/api/recast-lens/status', sessionId)}`);
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || 'lens status unavailable');
   return data;
 }
 
-export async function setLensObjectTracking(enabled) {
+export async function setLensObjectTracking(enabled, sessionId) {
   const res = await fetch(`${API.lensBridge}/api/recast-lens/tracking`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ enabled, session: sessionId }),
   });
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || 'lens tracking update failed');
@@ -164,19 +170,19 @@ export async function sendLensFrame(blob, metadata = {}) {
   return data;
 }
 
-export async function interpretLensFrame(question = 'What am I seeing in this Recast Lens frame?') {
+export async function interpretLensFrame(question = 'What am I seeing in this Recast Lens frame?', sessionId) {
   const res = await fetch(`${API.lensBridge}/api/recast-lens/interpret`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, session: sessionId }),
   });
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || 'vision interpretation failed');
   return data;
 }
 
-export async function detectLensObjects() {
-  const res = await fetch(`${API.lensBridge}/api/recast-lens/detect-objects`, {
+export async function detectLensObjects(sessionId) {
+  const res = await fetch(`${API.lensBridge}${withSession('/api/recast-lens/detect-objects', sessionId)}`, {
     method: 'POST',
   });
   const data = await res.json();
