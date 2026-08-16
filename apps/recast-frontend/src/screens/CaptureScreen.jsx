@@ -1,19 +1,121 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Logo, ProgressBar, Pill } from '../components.jsx';
-import { analyzeImage, askAgent, transcribe } from '../api.js';
+import { API, analyzeImage, askAgent, getLensBridgeHealth, sendLensFrame, transcribe } from '../api.js';
 
-// Real pipeline calls, not a simulated scan -- per explicit direction:
-// every button here hits an actual backend (Cosmos vision via /analyze-image,
-// or the full tool-calling agent via /chat, which can call
-// describe_camera_view / search_* tools for real).
+const FRAME_INTERVAL_MS = 750;
+
 export default function CaptureScreen({ onNext }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const fileRef = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const frameTimerRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [streaming, setStreaming] = useState(false);
+  const [bridgeStatus, setBridgeStatus] = useState('unchecked');
+  const [framesSent, setFramesSent] = useState(0);
+  const [lastFrameAt, setLastFrameAt] = useState(null);
+  const [sessionId] = useState(() => `recast-lens-${Date.now()}`);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
+
+  useEffect(() => {
+    checkBridge();
+    return () => {
+      stopFrameStream();
+      stopCamera();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function checkBridge() {
+    try {
+      const data = await getLensBridgeHealth();
+      setBridgeStatus(data.ok ? 'online' : 'unhealthy');
+    } catch {
+      setBridgeStatus('offline');
+    }
+  }
+
+  async function startCamera() {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraReady(true);
+    } catch (e) {
+      setError(`camera error: ${e.message}`);
+      setCameraReady(false);
+    }
+  }
+
+  function stopCamera() {
+    stopFrameStream();
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraReady(false);
+  }
+
+  function startFrameStream() {
+    if (!cameraReady) {
+      setError('start the camera before streaming frames');
+      return;
+    }
+    setError(null);
+    setFramesSent(0);
+    setStreaming(true);
+    frameTimerRef.current = window.setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
+    captureAndSendFrame();
+  }
+
+  function stopFrameStream() {
+    if (frameTimerRef.current) window.clearInterval(frameTimerRef.current);
+    frameTimerRef.current = null;
+    setStreaming(false);
+  }
+
+  async function captureAndSendFrame() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !video.videoWidth || !video.videoHeight) return;
+
+    const targetWidth = 960;
+    const targetHeight = Math.round((video.videoHeight / video.videoWidth) * targetWidth);
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      try {
+        await sendLensFrame(blob, { sessionId, deviceLabel: 'iphone-browser-camera' });
+        setFramesSent((count) => count + 1);
+        setLastFrameAt(new Date());
+        setBridgeStatus('online');
+      } catch (e) {
+        setError(e.message);
+        setBridgeStatus('offline');
+        stopFrameStream();
+      }
+    }, 'image/jpeg', 0.72);
+  }
 
   async function runImageUpload(file) {
     setBusy(true); setError(null); setResult(null);
@@ -66,9 +168,55 @@ export default function CaptureScreen({ onNext }) {
     <div className="screen">
       <Logo />
       <ProgressBar step={2} />
-      <Pill tone="blue">📱 Walk it with your iPhone</Pill>
-      <h1 className="headline">Now let's see what the records can't tell you.</h1>
-      <p className="subhead">Every button below calls a real backend pipeline — vision AI, live search tools, or the full agent. Nothing here is simulated.</p>
+      <Pill tone={streaming ? 'green' : 'blue'}>{streaming ? 'Live frame stream' : 'Recast Lens v1'}</Pill>
+      <h1 className="headline">Stream the iPhone camera to the GN100.</h1>
+      <p className="subhead">This first version uses our own browser camera code and Recast Lens bridge on port 8910. It does not use Larix or the occupied 8099 prototype.</p>
+
+      <div className="lens-panel">
+        <div className="lens-video-wrap">
+          <video ref={videoRef} className="lens-video" playsInline muted />
+          {!cameraReady && (
+            <div className="lens-placeholder">
+              <div className="score-label">Camera idle</div>
+              <p className="subhead">Start camera on the iPhone, then stream frames to the GN100 bridge.</p>
+            </div>
+          )}
+          {streaming && <div className="lens-live">LIVE</div>}
+        </div>
+        <canvas ref={canvasRef} hidden />
+
+        <div className="lens-status-grid">
+          <div>
+            <span>Bridge</span>
+            <strong className={bridgeStatus === 'online' ? 'ok' : bridgeStatus === 'offline' ? 'bad' : ''}>{bridgeStatus}</strong>
+          </div>
+          <div>
+            <span>Target</span>
+            <strong>{API.lensBridge.replace(/^https?:\/\//, '')}</strong>
+          </div>
+          <div>
+            <span>Frames</span>
+            <strong>{framesSent}</strong>
+          </div>
+          <div>
+            <span>Last frame</span>
+            <strong>{lastFrameAt ? lastFrameAt.toLocaleTimeString() : 'none'}</strong>
+          </div>
+        </div>
+
+        <div className="lens-controls">
+          {!cameraReady ? (
+            <button className="btn primary block" disabled={busy} onClick={startCamera}>Start camera</button>
+          ) : (
+            <button className="btn ghost block" disabled={streaming} onClick={stopCamera}>Stop camera</button>
+          )}
+          {!streaming ? (
+            <button className="btn primary block" disabled={!cameraReady} onClick={startFrameStream}>Stream to GN100</button>
+          ) : (
+            <button className="btn ghost block" onClick={stopFrameStream}>Stop stream</button>
+          )}
+        </div>
+      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files[0] && runImageUpload(e.target.files[0])} />

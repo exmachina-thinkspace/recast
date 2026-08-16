@@ -35,9 +35,11 @@ Historical research and broad hackathon preparation live in `city-of-seattle-pre
 | VSS / live video ingestion | [`docs/vss/`](docs/vss/) |
 | Mobile capture / recast-ios | [`docs/mobile/`](docs/mobile/) |
 | Recast Lens Compound Engineering plan | [`docs/plans/recast-lens-compound-engineering-plan.md`](docs/plans/recast-lens-compound-engineering-plan.md) |
+| Recast webapp Compound Engineering plan | [`docs/plans/recast-webapp-compound-engineering-plan.md`](docs/plans/recast-webapp-compound-engineering-plan.md) |
 | Screenshots and sample outputs | [`assets/`](assets/) |
 | Citywide 3D view (app prototype) | [`apps/city-view-3d/`](apps/city-view-3d/) |
 | Image generation: "Alternative Futures" renders (FLUX.1-dev NIM on the Spark, hosted fallback) | [`services/image-gen/`](services/image-gen/) |
+| Recast Lens bridge | [`services/recast-lens-bridge/`](services/recast-lens-bridge/) |
 | Plans (Compound Engineering) | [`docs/plans/`](docs/plans/) |
 | Documented solutions / learnings | [`docs/solutions/`](docs/solutions/) |
 
@@ -46,6 +48,7 @@ Historical research and broad hackathon preparation live in `city-of-seattle-pre
 - Demo 1 thesis and acceptance criteria are drafted.
 - GB100 local PostgreSQL `recast` foundation is live with Tier 0 + Tier 1 public Outerspaces data loaded directly from Supabase and validated.
 - iPhone live video ingestion has been verified through a Larix-style path: mobile H.264 video push -> MediaMTX -> RTSP -> Acer GN100 / VIOS.
+- Recast-owned browser-camera capture is now started as `Recast Lens v1`: iPhone browser camera -> Recast frontend -> Recast Lens bridge on port `8910` -> latest frame/status for future VSS adapter.
 - NVIDIA VSS semantic "Ctrl-F for a building" remains a gating experiment until live or recorded clip query results are verified.
 - Capital-stack intelligence is included as a product layer, but specific building/program eligibility must remain explicitly classified as verified, potentially relevant, unknown, or not eligible.
 

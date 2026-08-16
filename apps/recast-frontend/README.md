@@ -1,16 +1,60 @@
-# React + Vite
+# Recast Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+This is the judge-facing Recast webapp.
 
-Currently, two official plugins are available:
+It is separate from the future Recast Lens iOS app:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- webapp = Recast intelligence, story, evidence display, agent workflow;
+- Recast Lens = native building evidence capture.
 
-## React Compiler
+## Compound Engineering Plan
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Use the webapp plan before broad implementation:
 
-## Expanding the Oxlint configuration
+[`../../docs/plans/recast-webapp-compound-engineering-plan.md`](../../docs/plans/recast-webapp-compound-engineering-plan.md)
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Current Runtime Shape
+
+The frontend is a React/Vite app that consumes existing local services.
+
+Current client assumptions in `src/api.js`:
+
+- buildings API: port `8900`;
+- agent API: port `8601`;
+- Recast Lens bridge: port `8910`;
+- 3D city view: port `8700`;
+- host is derived from `window.location.hostname`.
+
+## Capture Boundary
+
+Do not make this webapp a Larix clone.
+
+Larix or similar tools may be used as behavior references or temporary test signal sources, but they should not be submitted as Recast code or represented as the Recast product.
+
+The webapp should display NVIDIA VSS evidence through a Recast-owned backend/VSS adapter:
+
+```text
+webapp
+  -> Recast backend / VSS adapter
+  -> NVIDIA VSS on Acer GN100
+  -> timestamped visual evidence
+  -> Recast evidence model
+  -> webapp display
+```
+
+VSS is the visual-understanding engine. Recast is the workflow, data, and recommendation layer around it.
+
+## Recast Lens V1
+
+The `CaptureScreen` now includes a Recast-owned browser-camera path:
+
+```text
+iPhone browser camera
+  -> Recast frontend
+  -> POST JPEG frames to Recast Lens bridge on port 8910
+  -> latest frame/status for future VSS adapter
+```
+
+This avoids Larix code and avoids the occupied `8099` prototype.
+
+If iPhone Safari refuses camera permission from a LAN HTTP URL, serve the frontend over HTTPS or use a trusted/tunneled development origin. Browser camera APIs can require a secure context even when the bridge itself is reachable on the LAN.

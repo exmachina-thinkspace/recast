@@ -10,6 +10,7 @@ const DEFAULT_HOST = window.location.hostname;
 export const API = {
   buildings: `http://${DEFAULT_HOST}:8900`,
   agent: `http://${DEFAULT_HOST}:8601`,
+  lensBridge: `http://${DEFAULT_HOST}:8910`,
 };
 
 export const CITY_VIEW_URL = `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
@@ -49,4 +50,26 @@ export async function analyzeImage(file) {
   const data = await res.json();
   if (data.error) throw new Error(data.error);
   return data; // { description, source }
+}
+
+export async function getLensBridgeHealth() {
+  const res = await fetch(`${API.lensBridge}/health`);
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'lens bridge unavailable');
+  return data;
+}
+
+export async function sendLensFrame(blob, metadata = {}) {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/frame`, {
+    method: 'POST',
+    headers: {
+      'X-Recast-Session': metadata.sessionId || '',
+      'X-Recast-Device': metadata.deviceLabel || '',
+      'X-Recast-Source': 'recast-frontend-browser-camera',
+    },
+    body: blob,
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'frame upload failed');
+  return data;
 }
