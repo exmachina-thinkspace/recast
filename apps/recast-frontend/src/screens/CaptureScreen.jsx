@@ -9,15 +9,17 @@ import {
   fileToDataUrl,
   generateReuseImage,
   getLensBridgeHealth,
+  getLensStatus,
   interpretLensFrame,
   sendLensFrame,
+  setLensObjectTracking,
   transcribe,
 } from '../api.js';
 
 const FRAME_INTERVAL_MS = 200;
 const FRAME_TARGET_WIDTH = 640;
 const FRAME_JPEG_QUALITY = 0.55;
-const OBJECT_DETECT_INTERVAL_MS = 5000;
+const LENS_STATUS_INTERVAL_MS = 1000;
 
 function formatObjectFreshness(objects) {
   if (!objects?.created_at_iso) return 'none';
@@ -72,9 +74,10 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const frameTimerRef = useRef(null);
-  const objectTimerRef = useRef(null);
+  const statusTimerRef = useRef(null);
   const objectDetectionInFlightRef = useRef(false);
   const liveObjectTrackingRef = useRef(true);
+  const trackingRequestedRef = useRef(false);
   const cameraStreamRef = useRef(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -99,7 +102,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   useEffect(() => {
     checkBridge();
     return () => {
-      stopObjectTracking();
+      stopLensStatusPolling();
       stopFrameStream();
       stopCamera();
     };
@@ -163,6 +166,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     setFramesSent(0);
     setObjects(null);
     setStreaming(true);
+    trackingRequestedRef.current = false;
     frameTimerRef.current = window.setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
     captureAndSendFrame();
   }
@@ -170,31 +174,52 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   function stopFrameStream() {
     if (frameTimerRef.current) window.clearInterval(frameTimerRef.current);
     frameTimerRef.current = null;
-    stopObjectTracking();
+    stopLensStatusPolling();
+    setLensObjectTracking(false).catch(() => {});
+    trackingRequestedRef.current = false;
     setStreaming(false);
   }
 
-  function startObjectTracking() {
-    if (objectTimerRef.current) return;
-    runObjectDetection({ clear: false, quiet: true });
-    objectTimerRef.current = window.setInterval(() => {
-      runObjectDetection({ clear: false, quiet: true });
-    }, OBJECT_DETECT_INTERVAL_MS);
+  function startLensStatusPolling() {
+    if (statusTimerRef.current) return;
+    pollLensStatus();
+    statusTimerRef.current = window.setInterval(pollLensStatus, LENS_STATUS_INTERVAL_MS);
   }
 
-  function stopObjectTracking() {
-    if (objectTimerRef.current) window.clearInterval(objectTimerRef.current);
-    objectTimerRef.current = null;
+  function stopLensStatusPolling() {
+    if (statusTimerRef.current) window.clearInterval(statusTimerRef.current);
+    statusTimerRef.current = null;
   }
 
-  function toggleObjectTracking() {
+  async function pollLensStatus() {
+    try {
+      const data = await getLensStatus();
+      if (data.objects) setObjects(data.objects);
+      if (data.tracking) {
+        const enabled = Boolean(data.tracking.enabled);
+        liveObjectTrackingRef.current = enabled;
+        setLiveObjectTracking(enabled);
+      }
+      setBridgeStatus(data.ok ? 'online' : 'unhealthy');
+    } catch {
+      setBridgeStatus('offline');
+    }
+  }
+
+  async function toggleObjectTracking() {
     const next = !liveObjectTracking;
-    liveObjectTrackingRef.current = next;
-    setLiveObjectTracking(next);
-    if (next && streaming && lastFrameAt) {
-      startObjectTracking();
-    } else {
-      stopObjectTracking();
+    setDetectingObjects(true);
+    try {
+      const data = await setLensObjectTracking(next);
+      const enabled = Boolean(data.tracking?.enabled);
+      liveObjectTrackingRef.current = enabled;
+      trackingRequestedRef.current = enabled;
+      setLiveObjectTracking(enabled);
+      if (enabled) startLensStatusPolling();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDetectingObjects(false);
     }
   }
 
@@ -217,7 +242,13 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
         setFramesSent((count) => count + 1);
         setLastFrameAt(new Date());
         setBridgeStatus('online');
-        if (liveObjectTrackingRef.current) startObjectTracking();
+        startLensStatusPolling();
+        if (liveObjectTrackingRef.current && !trackingRequestedRef.current) {
+          trackingRequestedRef.current = true;
+          setLensObjectTracking(true).catch(() => {
+            trackingRequestedRef.current = false;
+          });
+        }
       } catch (e) {
         setError(e.message);
         setBridgeStatus('offline');

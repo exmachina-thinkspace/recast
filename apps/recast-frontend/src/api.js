@@ -131,6 +131,24 @@ export async function getLensBridgeHealth() {
   return data;
 }
 
+export async function getLensStatus() {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/status`);
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'lens status unavailable');
+  return data;
+}
+
+export async function setLensObjectTracking(enabled) {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/tracking`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'lens tracking update failed');
+  return data;
+}
+
 export async function sendLensFrame(blob, metadata = {}) {
   const res = await fetch(`${API.lensBridge}/api/recast-lens/frame`, {
     method: 'POST',

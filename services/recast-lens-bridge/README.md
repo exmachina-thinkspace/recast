@@ -81,6 +81,7 @@ origin, and Vite forwards to this bridge.
 | `/api/recast-lens/interpretation` | `GET` | Return latest interpretation |
 | `/api/recast-lens/detect-objects` | `POST` | Run local YOLO object detection on the latest frame |
 | `/api/recast-lens/objects` | `GET` | Return latest object detection result |
+| `/api/recast-lens/tracking` | `GET`/`POST` | Read or toggle bridge-owned live object tracking |
 
 ## View On The GN100
 
@@ -116,6 +117,11 @@ debugging object detection.
 
 The live image refresh and AI overlay are intentionally separate loops. Video
 should keep moving even when object detection is still thinking.
+
+The bridge owns live object tracking. Browser tabs call
+`/api/recast-lens/tracking` to enable or disable the bridge-owned tracker, then
+poll `/api/recast-lens/status` for cached object boxes. They should not each run
+their own repeated `/detect-objects` loop.
 
 The bridge enforces a single object-detection pass at a time and returns cached
 results while a pass is running or the latest detection is still fresh. This

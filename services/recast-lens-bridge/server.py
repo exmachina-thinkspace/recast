@@ -45,7 +45,27 @@ class State:
         self.latest_interpretation = None
         self.latest_objects = None
         self.detect_lock = threading.Lock()
+        self.tracking_enabled = False
+        self.tracking_thread = None
+        self.tracking_stop = threading.Event()
         os.makedirs(data_dir, exist_ok=True)
+
+    def frame_status(self):
+        if self.latest_meta is None and os.path.exists(self.latest_meta_path):
+            try:
+                with open(self.latest_meta_path, encoding="utf-8") as f:
+                    self.latest_meta = json.load(f)
+            except json.JSONDecodeError:
+                self.latest_meta = None
+        frame_age_s = None
+        if self.latest_meta and self.latest_meta.get("received_at"):
+            frame_age_s = round(time.time() - float(self.latest_meta["received_at"]), 2)
+        return {
+            "has_frame": os.path.exists(self.latest_frame_path),
+            "frame_age_s": frame_age_s,
+            "is_live": frame_age_s is not None and frame_age_s <= LIVE_FRAME_MAX_AGE_S,
+            "latest": self.latest_meta,
+        }
 
     def write_frame(self, frame_bytes, headers):
         self.frame_count += 1
@@ -192,25 +212,45 @@ class State:
         finally:
             self.detect_lock.release()
 
+    def tracking_status(self):
+        running = self.tracking_thread is not None and self.tracking_thread.is_alive()
+        return {
+            "enabled": self.tracking_enabled,
+            "running": running,
+            "interval_ms": OBJECT_DETECT_INTERVAL_MS,
+            "min_interval_s": OBJECT_DETECT_MIN_INTERVAL_S,
+        }
+
+    def set_tracking(self, enabled):
+        if enabled:
+            self.tracking_enabled = True
+            if self.tracking_thread is None or not self.tracking_thread.is_alive():
+                self.tracking_stop.clear()
+                self.tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
+                self.tracking_thread.start()
+        else:
+            self.tracking_enabled = False
+            self.tracking_stop.set()
+        return {"ok": True, "tracking": self.tracking_status()}
+
+    def _tracking_loop(self):
+        while not self.tracking_stop.is_set():
+            if not self.tracking_enabled:
+                self.tracking_stop.wait(OBJECT_DETECT_INTERVAL_MS / 1000.0)
+                continue
+            if self.frame_status()["is_live"]:
+                self.detect_objects()
+            self.tracking_stop.wait(OBJECT_DETECT_INTERVAL_MS / 1000.0)
+
     def status(self):
-        if self.latest_meta is None and os.path.exists(self.latest_meta_path):
-            try:
-                with open(self.latest_meta_path, encoding="utf-8") as f:
-                    self.latest_meta = json.load(f)
-            except json.JSONDecodeError:
-                self.latest_meta = None
-        frame_age_s = None
-        if self.latest_meta and self.latest_meta.get("received_at"):
-            frame_age_s = round(time.time() - float(self.latest_meta["received_at"]), 2)
+        frame = self.frame_status()
         return {
             "ok": True,
             "frame_count": self.frame_count,
-            "has_frame": os.path.exists(self.latest_frame_path),
-            "frame_age_s": frame_age_s,
-            "is_live": frame_age_s is not None and frame_age_s <= LIVE_FRAME_MAX_AGE_S,
-            "latest": self.latest_meta,
+            **frame,
             "interpretation": self.interpretation_status()["latest_interpretation"],
             "objects": self.object_status()["latest_objects"],
+            "tracking": self.tracking_status(),
         }
 
 
@@ -274,6 +314,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/recast-lens/objects":
             self._send_json(200, self.state.object_status())
             return
+        if path == "/api/recast-lens/tracking":
+            self._send_json(200, {"ok": True, "tracking": self.state.tracking_status()})
+            return
         if path == "/api/recast-lens/latest.jpg":
             self._send_file(200, self.state.latest_frame_path, "image/jpeg")
             return
@@ -295,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "image/jpeg")
             self.end_headers()
             return
-        if path in {"/health", "/api/recast-lens/status", "/api/recast-lens/interpretation", "/api/recast-lens/objects"}:
+        if path in {"/health", "/api/recast-lens/status", "/api/recast-lens/interpretation", "/api/recast-lens/objects", "/api/recast-lens/tracking"}:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -321,6 +364,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/recast-lens/detect-objects":
             result = self.state.detect_objects()
             self._send_json(500 if result.get("error") else 200, result)
+            return
+        if path == "/api/recast-lens/tracking":
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                length = 0
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                body = {}
+            result = self.state.set_tracking(bool(body.get("enabled")))
+            self._send_json(200, result)
             return
         if path != "/api/recast-lens/frame":
             self._send_json(404, {"error": "not found"})
@@ -388,7 +444,7 @@ VIEWER_HTML = """<!doctype html>
       <span id="meta">No frame yet.</span>
       <span>
         <button id="objects" type="button">Identify objects</button>
-        <button class="ghost" id="track" type="button">Live tracking on</button>
+        <button class="ghost" id="track" type="button">Live tracking off</button>
         <button id="interpret" type="button">What am I seeing?</button>
       </span>
     </footer>
@@ -397,7 +453,7 @@ VIEWER_HTML = """<!doctype html>
     <script>
       let latestObjects = null;
       let hasFrame = false;
-      let trackingEnabled = true;
+      let trackingEnabled = false;
       let detectionInFlight = false;
 
       function renderObjectBoxes(data) {
@@ -447,6 +503,10 @@ VIEWER_HTML = """<!doctype html>
             hasFrame = true;
             img.src = '/api/recast-lens/latest.jpg?ts=' + ts;
             if (data.objects) renderObjectBoxes(data.objects);
+            if (data.tracking) {
+              trackingEnabled = Boolean(data.tracking.enabled);
+              document.getElementById('track').textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+            }
             state.textContent = data.is_live ? 'live' : 'stale';
             state.className = data.is_live ? 'pill' : 'pill stale';
             const latest = data.latest || {};
@@ -512,20 +572,32 @@ VIEWER_HTML = """<!doctype html>
           button.textContent = 'Identify objects';
         }
       }
-      function toggleTracking() {
-        trackingEnabled = !trackingEnabled;
+      async function toggleTracking() {
+        const next = !trackingEnabled;
         const button = document.getElementById('track');
-        button.textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+        button.disabled = true;
+        button.textContent = next ? 'Starting tracking...' : 'Stopping tracking...';
+        try {
+          const res = await fetch('/api/recast-lens/tracking', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: next })
+          });
+          const data = await res.json();
+          trackingEnabled = Boolean(data.tracking?.enabled);
+          button.textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+        } catch (e) {
+          document.getElementById('answer').textContent = e.message;
+          button.textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+        } finally {
+          button.disabled = false;
+        }
       }
       document.getElementById('interpret').addEventListener('click', interpret);
       document.getElementById('objects').addEventListener('click', detectObjects);
       document.getElementById('track').addEventListener('click', toggleTracking);
       tick();
       setInterval(tick, """ + str(VIEWER_REFRESH_INTERVAL_MS) + """);
-      setInterval(() => {
-        const state = document.getElementById('state');
-        if (trackingEnabled && hasFrame && state.textContent === 'live') detectObjects({ quiet: true });
-      }, """ + str(OBJECT_DETECT_INTERVAL_MS) + """);
     </script>
   </body>
 </html>

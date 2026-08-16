@@ -262,6 +262,21 @@ Regression note:
 
 Running YOLO from multiple viewer/capture tabs can saturate the GN100 if each tab starts its own detector loop. The bridge must enforce one detector pass at a time and return cached detections while a new pass is running or while the cache is still fresh. Live video refresh is the priority; AI overlays are allowed to lag.
 
+Next-phase separation implemented:
+
+```text
+browser/video path:
+  iPhone camera -> lightweight JPEG frame posts -> bridge latest.jpg -> viewer refresh
+
+AI path:
+  bridge-owned background tracker -> sampled latest frame -> YOLO -> cached object overlay
+```
+
+The browser no longer owns repeated YOLO calls for live tracking. Capture and
+viewer screens toggle `/api/recast-lens/tracking`, then poll bridge status and
+render the latest cached boxes. This prevents multiple tabs from spawning
+competing detector loops.
+
 ### Spike 4 - Capital Stack Panel
 
 Goal:
