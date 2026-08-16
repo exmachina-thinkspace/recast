@@ -7,6 +7,34 @@ import sys
 
 from ultralytics import YOLO
 
+RELIABLE = {
+    "person": 0.45,
+    "chair": 0.35,
+    "couch": 0.35,
+    "dining table": 0.35,
+    "bed": 0.40,
+    "tv": 0.35,
+    "laptop": 0.35,
+    "keyboard": 0.30,
+    "mouse": 0.30,
+    "book": 0.30,
+    "clock": 0.35,
+    "vase": 0.30,
+    "potted plant": 0.35,
+    "bottle": 0.30,
+    "cup": 0.30,
+    "bowl": 0.30,
+    "sink": 0.35,
+    "toilet": 0.40,
+    "refrigerator": 0.40,
+    "microwave": 0.35,
+    "oven": 0.35,
+    "bench": 0.35,
+    "backpack": 0.35,
+    "suitcase": 0.35,
+    "cell phone": 0.30,
+}
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -29,11 +57,15 @@ def main():
     objects = []
     for box in result.boxes:
         cls_id = int(box.cls[0])
+        confidence = round(float(box.conf[0]), 4)
+        label = result.names.get(cls_id, str(cls_id))
+        if label not in RELIABLE or confidence < RELIABLE[label]:
+            continue
         x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
         objects.append({
-            "label": result.names.get(cls_id, str(cls_id)),
+            "label": label,
             "class_id": cls_id,
-            "confidence": round(float(box.conf[0]), 4),
+            "confidence": confidence,
             "bbox_xyxy": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
             "center_xy": [round((x1 + x2) / 2, 1), round((y1 + y2) / 2, 1)],
             "relative_area": round(((x2 - x1) * (y2 - y1)) / float(width * height), 5),

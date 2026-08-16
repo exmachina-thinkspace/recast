@@ -58,11 +58,6 @@ function ObjectBoxOverlay({ objects }) {
   );
 }
 
-function sameFrame(a, b) {
-  if (!a?.received_at || !b?.received_at) return false;
-  return Math.abs(Number(a.received_at) - Number(b.received_at)) < 0.001;
-}
-
 function objectResultIsFresh(objects) {
   if (!objects?.created_at_iso) return false;
   return Date.now() - new Date(objects.created_at_iso).getTime() < OBJECT_RESULT_MAX_AGE_MS;
@@ -218,11 +213,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   async function pollLensStatus() {
     try {
       const data = await getLensStatus(sessionId);
-      if (data.objects && (sameFrame(data.objects.frame, data.latest) || objectResultIsFresh(data.objects))) {
-        setObjects(data.objects);
-      } else if (data.objects && !objectResultIsFresh(data.objects)) {
-        setObjects(null);
-      }
+      setObjects((current) => (objectResultIsFresh(current) ? current : null));
       if (data.tracking) {
         const enabled = Boolean(data.tracking.enabled);
         liveObjectTrackingRef.current = enabled;
@@ -334,7 +325,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     if (clear) setObjects(null);
     try {
       const data = await detectLensObjects(sessionId);
-      setObjects(data);
+      setObjects(objectResultIsFresh(data) ? data : null);
       setBridgeStatus('online');
     } catch (e) {
       if (!quiet) setError(e.message);
