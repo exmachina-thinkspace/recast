@@ -3,6 +3,8 @@ import { Logo, ReuseImagePanel } from '../components.jsx';
 import { analyzeImage, askAgent, fileToDataUrl, generateReuseImage, getAgentHealth, transcribe } from '../api.js';
 
 const VISUALIZE_REUSE_PROMPT = 'Generate an image of this room repurposed as a community health clinic';
+const CHAT_STORAGE_KEY = 'recast-chat-history-v1';
+const MAX_AGENT_HISTORY_TURNS = 12;
 
 function wantsReuseImage(message, hasRoomPhoto) {
   const text = message.toLowerCase();
@@ -22,7 +24,15 @@ function proposedUseFrom(message, previousUse) {
 }
 
 export default function ChatScreen({ building, roomContext, onRoomContext }) {
-  const [log, setLog] = useState([]);
+  const [log, setLog] = useState(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(CHAT_STORAGE_KEY) || '[]');
+      if (!Array.isArray(saved)) return [];
+      return saved.filter((item) => item?.role && item?.text).slice(0, 40);
+    } catch {
+      return [];
+    }
+  });
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -34,7 +44,7 @@ export default function ChatScreen({ building, roomContext, onRoomContext }) {
   const recordingStartedAtRef = useRef(0);
   const holdingToRecordRef = useRef(false);
   const fileInputRef = useRef(null);
-  const messageIdRef = useRef(0);
+  const messageIdRef = useRef(log.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0));
 
   useEffect(() => {
     let active = true;
@@ -51,6 +61,20 @@ export default function ChatScreen({ building, roomContext, onRoomContext }) {
     return () => { active = false; window.clearInterval(timer); };
   }, []);
 
+  useEffect(() => {
+    const serializable = log
+      .filter((item) => item.role && item.text)
+      .slice(0, 40)
+      .map(({ id, role, text, trace, analysisError }) => ({
+        id,
+        role,
+        text,
+        trace,
+        analysisError,
+      }));
+    window.localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(serializable));
+  }, [log]);
+
   function nextId() {
     messageIdRef.current += 1;
     return messageIdRef.current;
@@ -58,6 +82,20 @@ export default function ChatScreen({ building, roomContext, onRoomContext }) {
 
   function updateMessage(id, patch) {
     setLog((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
+  }
+
+  function buildAgentHistory(pendingUserMessage) {
+    const turns = log
+      .slice()
+      .reverse()
+      .filter((item) => item.role === 'user' || item.role === 'agent')
+      .slice(-MAX_AGENT_HISTORY_TURNS)
+      .map((item) => ({
+        role: item.role === 'agent' ? 'assistant' : 'user',
+        content: item.text,
+      }));
+    if (pendingUserMessage) turns.push({ role: 'user', content: pendingUserMessage });
+    return turns;
   }
 
   function speak(text) {
@@ -140,7 +178,7 @@ export default function ChatScreen({ building, roomContext, onRoomContext }) {
       : 'Rendering an adaptive-reuse concept in this conversation.';
     if (!directVisualization) {
       try {
-        agentData = await askAgent(agentMessage);
+        agentData = await askAgent(agentMessage, buildAgentHistory(agentMessage));
         agentText = agentData.answer;
         speak(agentText);
       } catch (e) {

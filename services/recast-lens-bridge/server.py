@@ -18,7 +18,7 @@ import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "runtime")
 MAX_FRAME_BYTES = 6 * 1024 * 1024
@@ -31,11 +31,29 @@ DEFAULT_COSMOS_MODEL = os.environ.get("RECAST_COSMOS_MODEL", "nvidia/cosmos3-nan
 DEFAULT_DETECTOR_PYTHON = os.environ.get("RECAST_DETECTOR_PYTHON", "/home/acer01/arlo-vision/bin/python")
 DEFAULT_DETECTOR_SCRIPT = os.environ.get("RECAST_DETECTOR_SCRIPT", os.path.join(os.path.dirname(__file__), "detect_objects.py"))
 DEFAULT_YOLO_MODEL = os.environ.get("RECAST_YOLO_MODEL", "/home/acer01/arlo-vision/yolo11m.pt")
+SESSION_ID_MAX_LEN = 96
+
+
+def sanitize_session_id(value):
+    if not value:
+        return None
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "-" for ch in str(value))
+    cleaned = cleaned.strip(".-_")
+    return cleaned[:SESSION_ID_MAX_LEN] or None
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
 
 
 class State:
     def __init__(self, data_dir):
         self.data_dir = data_dir
+        self.sessions_dir = os.path.join(data_dir, "sessions")
         self.latest_frame_path = os.path.join(data_dir, "latest.jpg")
         self.latest_meta_path = os.path.join(data_dir, "latest.json")
         self.latest_interpretation_path = os.path.join(data_dir, "latest-interpretation.json")
@@ -45,10 +63,61 @@ class State:
         self.latest_interpretation = None
         self.latest_objects = None
         self.detect_lock = threading.Lock()
+        self.tracking_enabled = False
+        self.tracking_sessions = set()
+        self.tracking_thread = None
+        self.tracking_stop = threading.Event()
         os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(self.sessions_dir, exist_ok=True)
+
+    def session_paths(self, session_id):
+        session_id = sanitize_session_id(session_id)
+        if not session_id:
+            return {
+                "session_id": None,
+                "frame": self.latest_frame_path,
+                "meta": self.latest_meta_path,
+                "interpretation": self.latest_interpretation_path,
+                "objects": self.latest_objects_path,
+            }
+        session_dir = os.path.join(self.sessions_dir, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        return {
+            "session_id": session_id,
+            "frame": os.path.join(session_dir, "latest.jpg"),
+            "meta": os.path.join(session_dir, "latest.json"),
+            "interpretation": os.path.join(session_dir, "latest-interpretation.json"),
+            "objects": os.path.join(session_dir, "latest-objects.json"),
+        }
+
+    def session_ids(self):
+        try:
+            names = os.listdir(self.sessions_dir)
+        except FileNotFoundError:
+            return []
+        return sorted(name for name in names if sanitize_session_id(name) == name and os.path.isdir(os.path.join(self.sessions_dir, name)))
+
+    def sessions_status(self):
+        return [self.status(session_id) for session_id in self.session_ids()]
+
+    def frame_status(self, session_id=None):
+        paths = self.session_paths(session_id)
+        latest_meta = read_json(paths["meta"])
+        if paths["session_id"] is None:
+            self.latest_meta = latest_meta
+        frame_age_s = None
+        if latest_meta and latest_meta.get("received_at"):
+            frame_age_s = round(time.time() - float(latest_meta["received_at"]), 2)
+        return {
+            "has_frame": os.path.exists(paths["frame"]),
+            "frame_age_s": frame_age_s,
+            "is_live": frame_age_s is not None and frame_age_s <= LIVE_FRAME_MAX_AGE_S,
+            "latest": latest_meta,
+        }
 
     def write_frame(self, frame_bytes, headers):
         self.frame_count += 1
+        session_id = sanitize_session_id(headers.get("X-Recast-Session"))
         now = time.time()
         meta = {
             "ok": True,
@@ -56,33 +125,33 @@ class State:
             "received_at": now,
             "received_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
             "bytes": len(frame_bytes),
-            "session_id": headers.get("X-Recast-Session") or None,
+            "session_id": session_id,
             "device_label": headers.get("X-Recast-Device") or None,
             "source": headers.get("X-Recast-Source") or None,
         }
-        tmp = self.latest_frame_path + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(frame_bytes)
-        os.replace(tmp, self.latest_frame_path)
-        with open(self.latest_meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f)
+        for paths in (self.session_paths(session_id), self.session_paths(None)):
+            tmp = paths["frame"] + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(frame_bytes)
+            os.replace(tmp, paths["frame"])
+            with open(paths["meta"], "w", encoding="utf-8") as f:
+                json.dump(meta, f)
         self.latest_meta = meta
         return meta
 
-    def interpretation_status(self):
-        if self.latest_interpretation is None and os.path.exists(self.latest_interpretation_path):
-            try:
-                with open(self.latest_interpretation_path, encoding="utf-8") as f:
-                    self.latest_interpretation = json.load(f)
-            except json.JSONDecodeError:
-                self.latest_interpretation = None
-        return {"ok": True, "latest_interpretation": self.latest_interpretation}
+    def interpretation_status(self, session_id=None):
+        paths = self.session_paths(session_id)
+        latest_interpretation = read_json(paths["interpretation"])
+        if paths["session_id"] is None:
+            self.latest_interpretation = latest_interpretation
+        return {"ok": True, "latest_interpretation": latest_interpretation}
 
-    def interpret_latest(self, question=None):
-        if not os.path.exists(self.latest_frame_path):
+    def interpret_latest(self, question=None, session_id=None):
+        paths = self.session_paths(session_id)
+        if not os.path.exists(paths["frame"]):
             return {"error": "no frame received yet"}
 
-        with open(self.latest_frame_path, "rb") as f:
+        with open(paths["frame"], "rb") as f:
             image_b64 = base64.b64encode(f.read()).decode()
 
         prompt = question or (
@@ -117,29 +186,30 @@ class State:
             "model": DEFAULT_COSMOS_MODEL,
             "description": description.strip(),
             "question": question,
-            "frame": self.latest_meta,
+            "frame": read_json(paths["meta"]),
+            "session_id": paths["session_id"],
             "elapsed_s": round(time.time() - started, 2),
             "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        with open(self.latest_interpretation_path, "w", encoding="utf-8") as f:
+        with open(paths["interpretation"], "w", encoding="utf-8") as f:
             json.dump(result, f)
-        self.latest_interpretation = result
+        if paths["session_id"] is None:
+            self.latest_interpretation = result
         return result
 
-    def object_status(self):
-        if self.latest_objects is None and os.path.exists(self.latest_objects_path):
-            try:
-                with open(self.latest_objects_path, encoding="utf-8") as f:
-                    self.latest_objects = json.load(f)
-            except json.JSONDecodeError:
-                self.latest_objects = None
-        return {"ok": True, "latest_objects": self.latest_objects}
+    def object_status(self, session_id=None):
+        paths = self.session_paths(session_id)
+        latest_objects = read_json(paths["objects"])
+        if paths["session_id"] is None:
+            self.latest_objects = latest_objects
+        return {"ok": True, "latest_objects": latest_objects}
 
-    def detect_objects(self):
-        if not os.path.exists(self.latest_frame_path):
+    def detect_objects(self, session_id=None):
+        paths = self.session_paths(session_id)
+        if not os.path.exists(paths["frame"]):
             return {"error": "no frame received yet"}
 
-        cached = self.object_status()["latest_objects"]
+        cached = self.object_status(session_id)["latest_objects"]
         if cached and cached.get("created_at_epoch"):
             age = time.time() - float(cached["created_at_epoch"])
             if age < OBJECT_DETECT_MIN_INTERVAL_S:
@@ -148,7 +218,7 @@ class State:
                 return cached
 
         if not self.detect_lock.acquire(blocking=False):
-            cached = self.object_status()["latest_objects"]
+            cached = self.object_status(session_id)["latest_objects"]
             if cached:
                 cached["cached"] = True
                 cached["in_flight"] = True
@@ -160,7 +230,7 @@ class State:
             cmd = [
                 DEFAULT_DETECTOR_PYTHON,
                 DEFAULT_DETECTOR_SCRIPT,
-                self.latest_frame_path,
+                paths["frame"],
                 "--model",
                 DEFAULT_YOLO_MODEL,
             ]
@@ -180,42 +250,97 @@ class State:
             now = time.time()
             result.update({
                 "source": "latest Recast Lens frame",
-                "frame": self.latest_meta,
+                "frame": read_json(paths["meta"]),
+                "session_id": paths["session_id"],
                 "elapsed_s": round(now - started, 2),
                 "created_at_epoch": now,
                 "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
             })
-            with open(self.latest_objects_path, "w", encoding="utf-8") as f:
+            with open(paths["objects"], "w", encoding="utf-8") as f:
                 json.dump(result, f)
-            self.latest_objects = result
+            if paths["session_id"] is None:
+                self.latest_objects = result
             return result
         finally:
             self.detect_lock.release()
 
-    def status(self):
-        if self.latest_meta is None and os.path.exists(self.latest_meta_path):
-            try:
-                with open(self.latest_meta_path, encoding="utf-8") as f:
-                    self.latest_meta = json.load(f)
-            except json.JSONDecodeError:
-                self.latest_meta = None
-        frame_age_s = None
-        if self.latest_meta and self.latest_meta.get("received_at"):
-            frame_age_s = round(time.time() - float(self.latest_meta["received_at"]), 2)
+    def tracking_status(self, session_id=None):
+        session_id = sanitize_session_id(session_id)
+        running = self.tracking_thread is not None and self.tracking_thread.is_alive()
+        return {
+            "enabled": session_id in self.tracking_sessions if session_id else self.tracking_enabled,
+            "running": running,
+            "interval_ms": OBJECT_DETECT_INTERVAL_MS,
+            "min_interval_s": OBJECT_DETECT_MIN_INTERVAL_S,
+        }
+
+    def set_tracking(self, enabled, session_id=None):
+        session_id = sanitize_session_id(session_id)
+        if enabled:
+            if session_id:
+                self.tracking_sessions.add(session_id)
+            else:
+                self.tracking_enabled = True
+            if self.tracking_thread is None or not self.tracking_thread.is_alive():
+                self.tracking_stop.clear()
+                self.tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
+                self.tracking_thread.start()
+        else:
+            if session_id:
+                self.tracking_sessions.discard(session_id)
+            else:
+                self.tracking_enabled = False
+            if not self.tracking_enabled and not self.tracking_sessions:
+                self.tracking_stop.set()
+        return {"ok": True, "tracking": self.tracking_status(session_id)}
+
+    def _tracking_loop(self):
+        while not self.tracking_stop.is_set():
+            targets = list(self.tracking_sessions)
+            if self.tracking_enabled:
+                targets.append(None)
+            if not targets:
+                self.tracking_stop.wait(OBJECT_DETECT_INTERVAL_MS / 1000.0)
+                continue
+            for session_id in targets:
+                if self.frame_status(session_id)["is_live"]:
+                    self.detect_objects(session_id)
+            self.tracking_stop.wait(OBJECT_DETECT_INTERVAL_MS / 1000.0)
+
+    def status(self, session_id=None):
+        session_id = sanitize_session_id(session_id)
+        frame = self.frame_status(session_id)
         return {
             "ok": True,
+            "session_id": session_id,
             "frame_count": self.frame_count,
-            "has_frame": os.path.exists(self.latest_frame_path),
-            "frame_age_s": frame_age_s,
-            "is_live": frame_age_s is not None and frame_age_s <= LIVE_FRAME_MAX_AGE_S,
-            "latest": self.latest_meta,
-            "interpretation": self.interpretation_status()["latest_interpretation"],
-            "objects": self.object_status()["latest_objects"],
+            **frame,
+            "interpretation": self.interpretation_status(session_id)["latest_interpretation"],
+            "objects": self.object_status(session_id)["latest_objects"],
+            "tracking": self.tracking_status(session_id),
+            "sessions": self.session_ids() if session_id is None else None,
         }
 
 
 class Handler(BaseHTTPRequestHandler):
     state = None
+
+    def _query(self):
+        return parse_qs(urlparse(self.path).query)
+
+    def _session_from_query(self):
+        return sanitize_session_id((self._query().get("session") or [None])[0])
+
+    def _read_json_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            return json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            return {}
 
     def _send_html(self, status, body):
         payload = body.encode()
@@ -265,17 +390,23 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/", "/viewer", "/api/recast-lens/viewer"}:
             self._send_html(200, VIEWER_HTML)
             return
+        if path == "/api/recast-lens/sessions":
+            self._send_json(200, {"ok": True, "sessions": self.state.sessions_status()})
+            return
         if path == "/api/recast-lens/status":
-            self._send_json(200, self.state.status())
+            self._send_json(200, self.state.status(self._session_from_query()))
             return
         if path == "/api/recast-lens/interpretation":
-            self._send_json(200, self.state.interpretation_status())
+            self._send_json(200, self.state.interpretation_status(self._session_from_query()))
             return
         if path == "/api/recast-lens/objects":
-            self._send_json(200, self.state.object_status())
+            self._send_json(200, self.state.object_status(self._session_from_query()))
+            return
+        if path == "/api/recast-lens/tracking":
+            self._send_json(200, {"ok": True, "tracking": self.state.tracking_status(self._session_from_query())})
             return
         if path == "/api/recast-lens/latest.jpg":
-            self._send_file(200, self.state.latest_frame_path, "image/jpeg")
+            self._send_file(200, self.state.session_paths(self._session_from_query())["frame"], "image/jpeg")
             return
         self._send_json(404, {"error": "not found"})
 
@@ -287,7 +418,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/api/recast-lens/latest.jpg":
-            if not os.path.exists(self.state.latest_frame_path):
+            if not os.path.exists(self.state.session_paths(self._session_from_query())["frame"]):
                 self.send_response(404)
                 self.end_headers()
                 return
@@ -295,7 +426,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "image/jpeg")
             self.end_headers()
             return
-        if path in {"/health", "/api/recast-lens/status", "/api/recast-lens/interpretation", "/api/recast-lens/objects"}:
+        if path in {"/health", "/api/recast-lens/status", "/api/recast-lens/interpretation", "/api/recast-lens/objects", "/api/recast-lens/tracking"}:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -306,21 +437,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if path == "/api/recast-lens/interpret":
-            try:
-                length = int(self.headers.get("Content-Length", "0") or "0")
-            except ValueError:
-                length = 0
-            raw = self.rfile.read(length) if length else b"{}"
-            try:
-                body = json.loads(raw or b"{}")
-            except json.JSONDecodeError:
-                body = {}
-            result = self.state.interpret_latest(body.get("question"))
+            body = self._read_json_body()
+            result = self.state.interpret_latest(body.get("question"), body.get("session") or self._session_from_query())
             self._send_json(500 if result.get("error") else 200, result)
             return
         if path == "/api/recast-lens/detect-objects":
-            result = self.state.detect_objects()
+            session_id = self._session_from_query()
+            if not session_id and self.headers.get("Content-Type", "").startswith("application/json"):
+                session_id = self._read_json_body().get("session")
+            result = self.state.detect_objects(session_id)
             self._send_json(500 if result.get("error") else 200, result)
+            return
+        if path == "/api/recast-lens/tracking":
+            body = self._read_json_body()
+            result = self.state.set_tracking(bool(body.get("enabled")), body.get("session") or self._session_from_query())
+            self._send_json(200, result)
             return
         if path != "/api/recast-lens/frame":
             self._send_json(404, {"error": "not found"})
@@ -388,7 +519,7 @@ VIEWER_HTML = """<!doctype html>
       <span id="meta">No frame yet.</span>
       <span>
         <button id="objects" type="button">Identify objects</button>
-        <button class="ghost" id="track" type="button">Live tracking on</button>
+        <button class="ghost" id="track" type="button">Live tracking off</button>
         <button id="interpret" type="button">What am I seeing?</button>
       </span>
     </footer>
@@ -397,7 +528,7 @@ VIEWER_HTML = """<!doctype html>
     <script>
       let latestObjects = null;
       let hasFrame = false;
-      let trackingEnabled = true;
+      let trackingEnabled = false;
       let detectionInFlight = false;
 
       function renderObjectBoxes(data) {
@@ -447,6 +578,10 @@ VIEWER_HTML = """<!doctype html>
             hasFrame = true;
             img.src = '/api/recast-lens/latest.jpg?ts=' + ts;
             if (data.objects) renderObjectBoxes(data.objects);
+            if (data.tracking) {
+              trackingEnabled = Boolean(data.tracking.enabled);
+              document.getElementById('track').textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+            }
             state.textContent = data.is_live ? 'live' : 'stale';
             state.className = data.is_live ? 'pill' : 'pill stale';
             const latest = data.latest || {};
@@ -512,20 +647,32 @@ VIEWER_HTML = """<!doctype html>
           button.textContent = 'Identify objects';
         }
       }
-      function toggleTracking() {
-        trackingEnabled = !trackingEnabled;
+      async function toggleTracking() {
+        const next = !trackingEnabled;
         const button = document.getElementById('track');
-        button.textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+        button.disabled = true;
+        button.textContent = next ? 'Starting tracking...' : 'Stopping tracking...';
+        try {
+          const res = await fetch('/api/recast-lens/tracking', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: next })
+          });
+          const data = await res.json();
+          trackingEnabled = Boolean(data.tracking?.enabled);
+          button.textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+        } catch (e) {
+          document.getElementById('answer').textContent = e.message;
+          button.textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+        } finally {
+          button.disabled = false;
+        }
       }
       document.getElementById('interpret').addEventListener('click', interpret);
       document.getElementById('objects').addEventListener('click', detectObjects);
       document.getElementById('track').addEventListener('click', toggleTracking);
       tick();
       setInterval(tick, """ + str(VIEWER_REFRESH_INTERVAL_MS) + """);
-      setInterval(() => {
-        const state = document.getElementById('state');
-        if (trackingEnabled && hasFrame && state.textContent === 'live') detectObjects({ quiet: true });
-      }, """ + str(OBJECT_DETECT_INTERVAL_MS) + """);
     </script>
   </body>
 </html>

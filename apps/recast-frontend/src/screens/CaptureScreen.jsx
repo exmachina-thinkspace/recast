@@ -9,15 +9,19 @@ import {
   fileToDataUrl,
   generateReuseImage,
   getLensBridgeHealth,
+  getLensStatus,
   interpretLensFrame,
   sendLensFrame,
+  setLensObjectTracking,
   transcribe,
 } from '../api.js';
 
 const FRAME_INTERVAL_MS = 200;
 const FRAME_TARGET_WIDTH = 640;
 const FRAME_JPEG_QUALITY = 0.55;
-const OBJECT_DETECT_INTERVAL_MS = 5000;
+const LENS_STATUS_INTERVAL_MS = 1000;
+const OBJECT_DETECTION_INTERVAL_MS = 4000;
+const OBJECT_RESULT_MAX_AGE_MS = 10000;
 
 function formatObjectFreshness(objects) {
   if (!objects?.created_at_iso) return 'none';
@@ -54,6 +58,11 @@ function ObjectBoxOverlay({ objects }) {
   );
 }
 
+function objectResultIsFresh(objects) {
+  if (!objects?.created_at_iso) return false;
+  return Date.now() - new Date(objects.created_at_iso).getTime() < OBJECT_RESULT_MAX_AGE_MS;
+}
+
 // Real pipeline calls, not a simulated scan -- per explicit direction:
 // every button here hits an actual backend (Cosmos vision via /analyze-image,
 // or the full tool-calling agent via /chat, which can call
@@ -72,9 +81,13 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const frameTimerRef = useRef(null);
-  const objectTimerRef = useRef(null);
+  const statusTimerRef = useRef(null);
   const objectDetectionInFlightRef = useRef(false);
+  const lastObjectDetectionAtRef = useRef(0);
   const liveObjectTrackingRef = useRef(true);
+  const trackingRequestedRef = useRef(false);
+  const trackingApiUnsupportedRef = useRef(false);
+  const autoStartRequestedRef = useRef(false);
   const cameraStreamRef = useRef(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -98,13 +111,22 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
 
   useEffect(() => {
     checkBridge();
+    if (!autoStartRequestedRef.current && !cameraBlockedByOrigin) {
+      autoStartRequestedRef.current = true;
+      startCamera();
+    }
     return () => {
-      stopObjectTracking();
+      stopLensStatusPolling();
       stopFrameStream();
       stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (cameraReady && !streaming) startFrameStream();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraReady]);
 
   async function checkBridge() {
     try {
@@ -129,8 +151,8 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 720 },
+          height: { ideal: 1280 },
         },
         audio: false,
       });
@@ -163,6 +185,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     setFramesSent(0);
     setObjects(null);
     setStreaming(true);
+    trackingRequestedRef.current = false;
     frameTimerRef.current = window.setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
     captureAndSendFrame();
   }
@@ -170,32 +193,78 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   function stopFrameStream() {
     if (frameTimerRef.current) window.clearInterval(frameTimerRef.current);
     frameTimerRef.current = null;
-    stopObjectTracking();
+    stopLensStatusPolling();
+    setLensObjectTracking(false, sessionId).catch(() => {});
+    trackingRequestedRef.current = false;
     setStreaming(false);
   }
 
-  function startObjectTracking() {
-    if (objectTimerRef.current) return;
-    runObjectDetection({ clear: false, quiet: true });
-    objectTimerRef.current = window.setInterval(() => {
-      runObjectDetection({ clear: false, quiet: true });
-    }, OBJECT_DETECT_INTERVAL_MS);
+  function startLensStatusPolling() {
+    if (statusTimerRef.current) return;
+    pollLensStatus();
+    statusTimerRef.current = window.setInterval(pollLensStatus, LENS_STATUS_INTERVAL_MS);
   }
 
-  function stopObjectTracking() {
-    if (objectTimerRef.current) window.clearInterval(objectTimerRef.current);
-    objectTimerRef.current = null;
+  function stopLensStatusPolling() {
+    if (statusTimerRef.current) window.clearInterval(statusTimerRef.current);
+    statusTimerRef.current = null;
   }
 
-  function toggleObjectTracking() {
-    const next = !liveObjectTracking;
-    liveObjectTrackingRef.current = next;
-    setLiveObjectTracking(next);
-    if (next && streaming && lastFrameAt) {
-      startObjectTracking();
-    } else {
-      stopObjectTracking();
+  async function pollLensStatus() {
+    try {
+      const data = await getLensStatus(sessionId);
+      setObjects((current) => (objectResultIsFresh(current) ? current : null));
+      if (data.tracking) {
+        const enabled = Boolean(data.tracking.enabled);
+        liveObjectTrackingRef.current = enabled;
+        setLiveObjectTracking(enabled);
+      }
+      setBridgeStatus(data.ok ? 'online' : 'unhealthy');
+    } catch {
+      setBridgeStatus('offline');
     }
+  }
+
+  async function toggleObjectTracking() {
+    const next = !liveObjectTracking;
+    setDetectingObjects(true);
+    try {
+      if (trackingApiUnsupportedRef.current) {
+        liveObjectTrackingRef.current = next;
+        trackingRequestedRef.current = next;
+        setLiveObjectTracking(next);
+        if (next) {
+          startLensStatusPolling();
+          maybeRunObjectDetection();
+        }
+        return;
+      }
+      const data = await setLensObjectTracking(next, sessionId);
+      const enabled = Boolean(data.tracking?.enabled);
+      liveObjectTrackingRef.current = enabled;
+      trackingRequestedRef.current = enabled;
+      setLiveObjectTracking(enabled);
+      if (enabled) startLensStatusPolling();
+    } catch (e) {
+      trackingApiUnsupportedRef.current = true;
+      liveObjectTrackingRef.current = next;
+      trackingRequestedRef.current = next;
+      setLiveObjectTracking(next);
+      if (next) {
+        startLensStatusPolling();
+        maybeRunObjectDetection();
+      }
+    } finally {
+      setDetectingObjects(false);
+    }
+  }
+
+  function maybeRunObjectDetection() {
+    if (!liveObjectTrackingRef.current || objectDetectionInFlightRef.current) return;
+    const now = Date.now();
+    if (now - lastObjectDetectionAtRef.current < OBJECT_DETECTION_INTERVAL_MS) return;
+    lastObjectDetectionAtRef.current = now;
+    runObjectDetection({ clear: false, quiet: true });
   }
 
   async function captureAndSendFrame() {
@@ -217,7 +286,14 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
         setFramesSent((count) => count + 1);
         setLastFrameAt(new Date());
         setBridgeStatus('online');
-        if (liveObjectTrackingRef.current) startObjectTracking();
+        startLensStatusPolling();
+        if (liveObjectTrackingRef.current && !trackingRequestedRef.current) {
+          trackingRequestedRef.current = true;
+          setLensObjectTracking(true, sessionId).catch(() => {
+            trackingApiUnsupportedRef.current = true;
+          });
+        }
+        maybeRunObjectDetection();
       } catch (e) {
         setError(e.message);
         setBridgeStatus('offline');
@@ -231,7 +307,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     setError(null);
     setInterpretation(null);
     try {
-      const data = await interpretLensFrame();
+      const data = await interpretLensFrame('What am I seeing in this Recast Lens frame?', sessionId);
       setInterpretation(data);
       setBridgeStatus('online');
     } catch (e) {
@@ -248,8 +324,8 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     if (!quiet) setError(null);
     if (clear) setObjects(null);
     try {
-      const data = await detectLensObjects();
-      setObjects(data);
+      const data = await detectLensObjects(sessionId);
+      setObjects(objectResultIsFresh(data) ? data : null);
       setBridgeStatus('online');
     } catch (e) {
       if (!quiet) setError(e.message);
@@ -380,8 +456,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
       <header className="screen-header"><Logo /><div className="record-id">FIELD / LIVE</div></header>
       <ProgressBar step={2} />
       <div className="eyebrow"><span>03</span> FIELD CAPTURE</div>
-      <h1 className="headline">Turn the physical<br /><em>into signal.</em></h1>
-      <p className="subhead">See what the records cannot. Every capture runs through the real vision or agent pipeline.</p>
+      <h1 className="headline capture-headline">Recast Lens</h1>
 
       {cameraBlockedByOrigin && (
         <div className="lens-warning">
@@ -391,13 +466,12 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
       )}
 
       <div className="lens-panel">
-        <div className="score-label">RECAST LENS / GN100 LIVE</div>
+        <div className="score-label">GN100 LIVE</div>
         <div className="lens-video-wrap">
           <video ref={videoRef} className="lens-video" playsInline muted />
           {!cameraReady && (
             <div className="lens-placeholder">
               <div className="score-label">Camera idle</div>
-              <p className="subhead">Start the iPhone camera, then stream lightweight frames to the GN100 bridge.</p>
             </div>
           )}
           <ObjectBoxOverlay objects={objects} />
@@ -424,28 +498,20 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
           </div>
         </div>
 
-        <div className="lens-controls">
-          {!cameraReady ? (
-            <button className="btn primary block" disabled={busy || cameraBlockedByOrigin} onClick={startCamera}>Start camera</button>
-          ) : (
-            <button className="btn ghost block" disabled={streaming} onClick={stopCamera}>Stop camera</button>
-          )}
-          {!streaming ? (
-            <button className="btn primary block" disabled={!cameraReady} onClick={startFrameStream}>Stream to GN100</button>
-          ) : (
-            <button className="btn ghost block" onClick={stopFrameStream}>Stop stream</button>
-          )}
+        <div className="lens-controls lens-controls--compact">
+          <button className="btn ghost block" disabled={busy || cameraBlockedByOrigin || cameraReady} onClick={startCamera}>Camera</button>
+          <button className="btn ghost block" disabled={!streaming} onClick={stopFrameStream}>Pause</button>
         </div>
-        <div className="lens-controls">
+        <div className="lens-controls lens-controls--compact">
           <button className="btn ghost block" disabled={!lastFrameAt || interpreting} onClick={runLensInterpretation}>
-            {interpreting ? 'Asking NVIDIA vision...' : 'What am I seeing?'}
+            {interpreting ? 'Asking...' : 'Describe'}
           </button>
           <button className="btn ghost block" disabled={!lastFrameAt || detectingObjects} onClick={runObjectDetection}>
-            {detectingObjects ? 'Detecting objects...' : 'Identify objects'}
+            {detectingObjects ? 'Detecting...' : 'Objects'}
           </button>
         </div>
-        <button className={`btn ${liveObjectTracking ? 'primary' : 'ghost'} block`} disabled={!streaming && !lastFrameAt} onClick={toggleObjectTracking}>
-          {liveObjectTracking ? 'Live object tracking on' : 'Live object tracking off'}
+        <button className={`btn ${liveObjectTracking ? 'primary' : 'ghost'} block lens-track-button`} disabled={!streaming && !lastFrameAt} onClick={toggleObjectTracking}>
+          {liveObjectTracking ? 'Tracking on' : 'Tracking off'}
         </button>
 
         {objects && (
@@ -466,31 +532,26 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
         )}
       </div>
 
-      <div className={`capture-viewport ${room?.previewUrl ? 'has-room-photo' : ''}`}>
-        {room?.previewUrl ? (
+      {room?.previewUrl && (
+      <div className="capture-viewport has-room-photo">
           <img className="room-source-image" src={room.previewUrl} alt="Uploaded room" />
-        ) : (
-          <>
-            <div className="capture-grid" aria-hidden="true" />
-            <div className="scan-volume" aria-hidden="true"><i /><i /><i /></div>
-          </>
-        )}
         <div className="scan-plane" aria-hidden="true" />
-        <span className="capture-label capture-label--top">{room?.previewUrl ? 'ROOM SOURCE / CAPTURED' : 'SPATIAL SCAN / READY'}</span>
+        <span className="capture-label capture-label--top">ROOM SOURCE / CAPTURED</span>
         <span className="capture-label capture-label--bottom">COSMOS VISION LINK</span>
       </div>
+      )}
 
       <div className="action-stack">
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files[0] && runImageUpload(e.target.files[0])} />
-        <button className="btn ghost block action-button" disabled={busy} onClick={() => fileRef.current.click()}><span className="action-code">IMG</span><span>Analyze a photo</span><b>↗</b></button>
-        <button className="btn ghost block action-button" disabled={busy} onClick={() => runQuickAsk('What does the lobby camera view look like right now?', 'Lobby camera view')}><span className="action-code">CAM</span><span>Read the lobby camera</span><b>↗</b></button>
+        <button className="btn ghost block action-button" disabled={busy} onClick={() => fileRef.current.click()}><span className="action-code">IMG</span><span>Photo</span><b>↗</b></button>
+        <button className="btn ghost block action-button" disabled={busy} onClick={() => runQuickAsk('What does the lobby camera view look like right now?', 'Lobby camera view')}><span className="action-code">CAM</span><span>Lobby</span><b>↗</b></button>
         <button
           className={`btn ${recording ? 'primary' : 'ghost'} block action-button voice-action`}
           disabled={busy}
           onPointerDown={startRecording} onPointerUp={stopRecording}
           onPointerCancel={stopRecording}
         >
-          <span className="action-code">VOC</span><span>{recording ? 'Listening - release to send' : 'Hold to ask Recast'}</span><b>{recording ? '●' : '↗'}</b>
+          <span className="action-code">VOC</span><span>{recording ? 'Release' : 'Ask'}</span><b>{recording ? '●' : '↗'}</b>
         </button>
       </div>
 

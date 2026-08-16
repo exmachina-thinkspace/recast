@@ -15,7 +15,7 @@ import urllib.request
 
 PLANS = os.path.expanduser("~/plans")
 ARLO_FRAMES = os.path.expanduser("~/arlo-frames")
-COSMOS_API = "http://127.0.0.1:30082/v1/chat/completions"
+COSMOS_API = os.environ.get("RECAST_COSMOS_API", "http://127.0.0.1:30082/v1/chat/completions")
 COSMOS_MODEL = "nvidia/cosmos3-nano-reasoner"
 
 # Known-good captured frames from the live camera pipeline (services/vision-bridge

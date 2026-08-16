@@ -22,6 +22,12 @@ export const API = {
 export const CITY_VIEW_URL = trimTrailingSlash(import.meta.env.VITE_CITY_VIEW_URL) || `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
 export const FRONTEND_ORIGIN = DEFAULT_ORIGIN;
 
+function withSession(path, sessionId) {
+  if (!sessionId) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}session=${encodeURIComponent(sessionId)}`;
+}
+
 export async function getBuildings() {
   const res = await fetch(`${API.buildings}/api/buildings`);
   if (!res.ok) throw new Error('failed to load buildings');
@@ -34,11 +40,11 @@ export async function getBuildingDetail(i) {
   return res.json();
 }
 
-export async function askAgent(message) {
+export async function askAgent(message, history = []) {
   const res = await fetch(`${API.agent}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, history }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error);
@@ -91,6 +97,10 @@ export async function generateReuseImage({
   backend = 'auto',
 }) {
   if (!proposedUse?.trim()) throw new Error('describe what the space should become');
+  const health = await getImageGenHealth();
+  if (!health.nim?.ready && !health.hosted?.configured) {
+    throw new Error(`Image generation backend offline: NIM at ${health.nim?.url || 'unknown'} is not ready and NVIDIA_API_KEY is not configured for hosted fallback.`);
+  }
   const body = {
     building: building || 'the selected building',
     current_use: currentUse || 'an underused room',
@@ -131,6 +141,24 @@ export async function getLensBridgeHealth() {
   return data;
 }
 
+export async function getLensStatus(sessionId) {
+  const res = await fetch(`${API.lensBridge}${withSession('/api/recast-lens/status', sessionId)}`);
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'lens status unavailable');
+  return data;
+}
+
+export async function setLensObjectTracking(enabled, sessionId) {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/tracking`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled, session: sessionId }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'lens tracking update failed');
+  return data;
+}
+
 export async function sendLensFrame(blob, metadata = {}) {
   const res = await fetch(`${API.lensBridge}/api/recast-lens/frame`, {
     method: 'POST',
@@ -146,19 +174,19 @@ export async function sendLensFrame(blob, metadata = {}) {
   return data;
 }
 
-export async function interpretLensFrame(question = 'What am I seeing in this Recast Lens frame?') {
+export async function interpretLensFrame(question = 'What am I seeing in this Recast Lens frame?', sessionId) {
   const res = await fetch(`${API.lensBridge}/api/recast-lens/interpret`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, session: sessionId }),
   });
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || 'vision interpretation failed');
   return data;
 }
 
-export async function detectLensObjects() {
-  const res = await fetch(`${API.lensBridge}/api/recast-lens/detect-objects`, {
+export async function detectLensObjects(sessionId) {
+  const res = await fetch(`${API.lensBridge}${withSession('/api/recast-lens/detect-objects', sessionId)}`, {
     method: 'POST',
   });
   const data = await res.json();
