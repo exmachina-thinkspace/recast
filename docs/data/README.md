@@ -5,6 +5,7 @@
 | [local-recast-postgres-plan.md](local-recast-postgres-plan.md) | Architecture plan for a local GB100 PostgreSQL database named `recast` |
 | [local-recast-data-manifest.md](local-recast-data-manifest.md) | Exact Tier 0 + Tier 1 data movement manifest and validation plan |
 | [team-recast-db-access.md](team-recast-db-access.md) | Shareable team instructions for read-only access to the GB100 local Recast database |
+| [debt-maturity-workflow.md](debt-maturity-workflow.md) | Workflow for turning JLL-matched buildings into debt-maturity / legal-distress Recast signals |
 
 ## Implementation Artifacts
 

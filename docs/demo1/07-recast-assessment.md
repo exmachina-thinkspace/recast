@@ -17,6 +17,7 @@ Keep the distinction clear:
 ```text
 Records Signal
 Physical Evidence
+Debt Maturity / Legal Distress Evidence
 Capital Stack / Incentive Evidence
 Recast Assessment
 ```
@@ -52,6 +53,17 @@ INSUFFICIENT_EVIDENCE
         "claim": "string"
       }
     ]
+  },
+  "debt_maturity": {
+    "state": "maturity_known_near_term|maturity_inferred_near_term|refi_or_extension_found|possibly_paid_off|legal_distress_active|foreclosure_or_lender_action|receivership_requested|receiver_appointed|insufficient_debt_evidence|no_signal_found",
+    "evidence_label": "KNOWN|INFERRED|UNKNOWN|INSUFFICIENT_EVIDENCE",
+    "known_maturity_date": "date|null",
+    "inferred_maturity_window": "string|null",
+    "latest_debt_event_type": "string|null",
+    "latest_debt_event_date": "date|null",
+    "latest_lender": "string|null",
+    "source_ref": "string|null",
+    "next_verification_step": "string"
   },
   "physical_evidence": [
     {
@@ -121,6 +133,37 @@ For each candidate future, Recast should eventually answer:
 | Financial Fit | Could the economics plausibly work? |
 | Incentive Fit | What grants, credits, subsidies, incentives, or public financing could improve the economics? |
 
+## Debt Maturity Signal
+
+Debt maturity is a Recast signal input, not a standalone verdict.
+
+Use the workflow in [debt-maturity-workflow.md](../data/debt-maturity-workflow.md) to turn JLL-matched buildings into evidence-backed debt and legal-distress labels.
+
+For Demo 1 and early scoring, use categorical states before a numeric subscore:
+
+```text
+MATURITY_KNOWN_NEAR_TERM
+MATURITY_INFERRED_NEAR_TERM
+REFI_OR_EXTENSION_FOUND
+POSSIBLY_PAID_OFF
+LEGAL_DISTRESS_ACTIVE
+FORECLOSURE_OR_LENDER_ACTION
+RECEIVERSHIP_REQUESTED
+RECEIVER_APPOINTED
+INSUFFICIENT_DEBT_EVIDENCE
+NO_SIGNAL_FOUND
+```
+
+Debt maturity should influence:
+
+- As-Is weakness;
+- trajectory risk;
+- urgency / actionability;
+- confidence in a Recast opportunity;
+- capital-stack needs.
+
+It should not turn a building into a distressed asset by itself. A 2019-2023 sale/refi date is only a queueing signal until the recorder, court, lender, or licensed-source evidence is reviewed.
+
 ## Recommendation Rules
 
 - Do not make final feasibility claims.
@@ -129,6 +172,8 @@ For each candidate future, Recast should eventually answer:
 - Do not recommend a use without showing the top factors and risks.
 - Do not claim verified incentive eligibility unless the program requirements support it.
 - Distinguish `potentially_relevant` from `verified_eligible`.
+- Do not claim a debt maturity date unless a recorded document, court filing, licensed data source, or other source explicitly supports it.
+- Do not say "receiver appointed" unless supported by a court order/docket or recorded real-property document.
 - Always include what evidence would be needed next.
 
 ## Judge Payoff
