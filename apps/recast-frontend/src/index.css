@@ -204,6 +204,10 @@ h1.headline em {
   font-weight: 420;
   text-shadow: 0 0 28px rgba(125, 247, 236, 0.22);
 }
+.capture-headline {
+  font-size: clamp(30px, 7.2vw, 42px) !important;
+  letter-spacing: 0 !important;
+}
 .map-headline { font-size: clamp(34px, 9.2vw, 48px) !important; line-height: 1.01 !important; }
 
 p.subhead {
@@ -723,12 +727,18 @@ p.subhead {
 .capture-viewport.has-room-photo { background: #070b10; }
 .room-source-image { width: 100%; height: 100%; display: block; object-fit: cover; filter: saturate(.78) contrast(1.04); }
 
-.action-stack { display: flex; flex-direction: column; gap: 9px; }
+.action-stack { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .action-button { justify-content: flex-start; text-align: left; }
 .voice-action { touch-action: none; user-select: none; }
 .action-button > span:nth-child(2) { flex: 1; }
-.action-button > b { color: var(--cyan); font-family: var(--mono); font-size: 13px; }
-.action-code { display: grid; place-items: center; width: 33px; height: 25px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--cyan); font-family: var(--mono); font-size: 8px; letter-spacing: .08em; }
+.action-button > b { color: var(--cyan); font-family: var(--mono); font-size: 10px; }
+.action-button.btn {
+  min-height: 34px;
+  padding: 7px 8px;
+  gap: 6px;
+  font-size: 10px;
+}
+.action-code { display: grid; place-items: center; width: 25px; height: 20px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--cyan); font-family: var(--mono); font-size: 7px; letter-spacing: 0; }
 .pipeline-status { display: flex; align-items: center; justify-content: center; gap: 11px; color: var(--cyan); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
 .pipeline-status .scanner { width: 20px; height: 20px; }
 .room-reuse-card, .future-proposal-card { align-items: stretch; gap: 13px; }
@@ -910,10 +920,10 @@ a.linklike { color: var(--blue-ink); font-weight: 700; text-decoration: none; fo
 .lens-panel {
   border: 1px solid var(--line);
   border-radius: 4px 16px 4px 16px;
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 9px;
   background: rgba(255,255,255,.035);
 }
 
@@ -936,8 +946,10 @@ a.linklike { color: var(--blue-ink); font-weight: 700; text-decoration: none; fo
 
 .lens-video-wrap {
   position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
+  width: min(100%, 270px);
+  max-height: 47vh;
+  aspect-ratio: 9 / 16;
+  margin: 0 auto;
   border-radius: 8px;
   overflow: hidden;
   background: #10141c;
@@ -1011,15 +1023,15 @@ a.linklike { color: var(--blue-ink); font-weight: 700; text-decoration: none; fo
 
 .lens-status-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .lens-status-grid > div {
-  min-height: 58px;
+  min-height: 42px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 9px 10px;
+  border-radius: 7px;
+  padding: 7px 8px;
   background: rgba(255,255,255,.035);
   display: flex;
   flex-direction: column;
@@ -1028,14 +1040,14 @@ a.linklike { color: var(--blue-ink); font-weight: 700; text-decoration: none; fo
 
 .lens-status-grid span {
   color: var(--ink-3);
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 800;
   text-transform: uppercase;
 }
 
 .lens-status-grid strong {
   color: var(--ink-1);
-  font-size: 12.5px;
+  font-size: 10px;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -1046,7 +1058,14 @@ a.linklike { color: var(--blue-ink); font-weight: 700; text-decoration: none; fo
 .lens-controls {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 7px;
+}
+
+.lens-controls--compact .btn,
+.lens-track-button {
+  min-height: 34px;
+  padding: 8px 9px;
+  font-size: 10px;
 }
 
 .lens-answer {

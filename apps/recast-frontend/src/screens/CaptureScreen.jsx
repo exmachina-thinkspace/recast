@@ -78,6 +78,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
   const objectDetectionInFlightRef = useRef(false);
   const liveObjectTrackingRef = useRef(true);
   const trackingRequestedRef = useRef(false);
+  const autoStartRequestedRef = useRef(false);
   const cameraStreamRef = useRef(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -101,6 +102,10 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
 
   useEffect(() => {
     checkBridge();
+    if (!autoStartRequestedRef.current && !cameraBlockedByOrigin) {
+      autoStartRequestedRef.current = true;
+      startCamera();
+    }
     return () => {
       stopLensStatusPolling();
       stopFrameStream();
@@ -108,6 +113,11 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (cameraReady && !streaming) startFrameStream();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraReady]);
 
   async function checkBridge() {
     try {
@@ -132,8 +142,8 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 720 },
+          height: { ideal: 1280 },
         },
         audio: false,
       });
@@ -411,8 +421,7 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
       <header className="screen-header"><Logo /><div className="record-id">FIELD / LIVE</div></header>
       <ProgressBar step={2} />
       <div className="eyebrow"><span>03</span> FIELD CAPTURE</div>
-      <h1 className="headline">Turn the physical<br /><em>into signal.</em></h1>
-      <p className="subhead">See what the records cannot. Every capture runs through the real vision or agent pipeline.</p>
+      <h1 className="headline capture-headline">Recast Lens</h1>
 
       {cameraBlockedByOrigin && (
         <div className="lens-warning">
@@ -422,13 +431,12 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
       )}
 
       <div className="lens-panel">
-        <div className="score-label">RECAST LENS / GN100 LIVE</div>
+        <div className="score-label">GN100 LIVE</div>
         <div className="lens-video-wrap">
           <video ref={videoRef} className="lens-video" playsInline muted />
           {!cameraReady && (
             <div className="lens-placeholder">
               <div className="score-label">Camera idle</div>
-              <p className="subhead">Start the iPhone camera, then stream lightweight frames to the GN100 bridge.</p>
             </div>
           )}
           <ObjectBoxOverlay objects={objects} />
@@ -455,28 +463,20 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
           </div>
         </div>
 
-        <div className="lens-controls">
-          {!cameraReady ? (
-            <button className="btn primary block" disabled={busy || cameraBlockedByOrigin} onClick={startCamera}>Start camera</button>
-          ) : (
-            <button className="btn ghost block" disabled={streaming} onClick={stopCamera}>Stop camera</button>
-          )}
-          {!streaming ? (
-            <button className="btn primary block" disabled={!cameraReady} onClick={startFrameStream}>Stream to GN100</button>
-          ) : (
-            <button className="btn ghost block" onClick={stopFrameStream}>Stop stream</button>
-          )}
+        <div className="lens-controls lens-controls--compact">
+          <button className="btn ghost block" disabled={busy || cameraBlockedByOrigin || cameraReady} onClick={startCamera}>Camera</button>
+          <button className="btn ghost block" disabled={!streaming} onClick={stopFrameStream}>Pause</button>
         </div>
-        <div className="lens-controls">
+        <div className="lens-controls lens-controls--compact">
           <button className="btn ghost block" disabled={!lastFrameAt || interpreting} onClick={runLensInterpretation}>
-            {interpreting ? 'Asking NVIDIA vision...' : 'What am I seeing?'}
+            {interpreting ? 'Asking...' : 'Describe'}
           </button>
           <button className="btn ghost block" disabled={!lastFrameAt || detectingObjects} onClick={runObjectDetection}>
-            {detectingObjects ? 'Detecting objects...' : 'Identify objects'}
+            {detectingObjects ? 'Detecting...' : 'Objects'}
           </button>
         </div>
-        <button className={`btn ${liveObjectTracking ? 'primary' : 'ghost'} block`} disabled={!streaming && !lastFrameAt} onClick={toggleObjectTracking}>
-          {liveObjectTracking ? 'Live object tracking on' : 'Live object tracking off'}
+        <button className={`btn ${liveObjectTracking ? 'primary' : 'ghost'} block lens-track-button`} disabled={!streaming && !lastFrameAt} onClick={toggleObjectTracking}>
+          {liveObjectTracking ? 'Tracking on' : 'Tracking off'}
         </button>
 
         {objects && (
@@ -497,31 +497,26 @@ export default function CaptureScreen({ building, roomContext, onRoomContext, on
         )}
       </div>
 
-      <div className={`capture-viewport ${room?.previewUrl ? 'has-room-photo' : ''}`}>
-        {room?.previewUrl ? (
+      {room?.previewUrl && (
+      <div className="capture-viewport has-room-photo">
           <img className="room-source-image" src={room.previewUrl} alt="Uploaded room" />
-        ) : (
-          <>
-            <div className="capture-grid" aria-hidden="true" />
-            <div className="scan-volume" aria-hidden="true"><i /><i /><i /></div>
-          </>
-        )}
         <div className="scan-plane" aria-hidden="true" />
-        <span className="capture-label capture-label--top">{room?.previewUrl ? 'ROOM SOURCE / CAPTURED' : 'SPATIAL SCAN / READY'}</span>
+        <span className="capture-label capture-label--top">ROOM SOURCE / CAPTURED</span>
         <span className="capture-label capture-label--bottom">COSMOS VISION LINK</span>
       </div>
+      )}
 
       <div className="action-stack">
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files[0] && runImageUpload(e.target.files[0])} />
-        <button className="btn ghost block action-button" disabled={busy} onClick={() => fileRef.current.click()}><span className="action-code">IMG</span><span>Analyze a photo</span><b>↗</b></button>
-        <button className="btn ghost block action-button" disabled={busy} onClick={() => runQuickAsk('What does the lobby camera view look like right now?', 'Lobby camera view')}><span className="action-code">CAM</span><span>Read the lobby camera</span><b>↗</b></button>
+        <button className="btn ghost block action-button" disabled={busy} onClick={() => fileRef.current.click()}><span className="action-code">IMG</span><span>Photo</span><b>↗</b></button>
+        <button className="btn ghost block action-button" disabled={busy} onClick={() => runQuickAsk('What does the lobby camera view look like right now?', 'Lobby camera view')}><span className="action-code">CAM</span><span>Lobby</span><b>↗</b></button>
         <button
           className={`btn ${recording ? 'primary' : 'ghost'} block action-button voice-action`}
           disabled={busy}
           onPointerDown={startRecording} onPointerUp={stopRecording}
           onPointerCancel={stopRecording}
         >
-          <span className="action-code">VOC</span><span>{recording ? 'Listening - release to send' : 'Hold to ask Recast'}</span><b>{recording ? '●' : '↗'}</b>
+          <span className="action-code">VOC</span><span>{recording ? 'Release' : 'Ask'}</span><b>{recording ? '●' : '↗'}</b>
         </button>
       </div>
 
