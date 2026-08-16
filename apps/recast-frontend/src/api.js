@@ -79,3 +79,14 @@ export async function sendLensFrame(blob, metadata = {}) {
   if (!res.ok || data.error) throw new Error(data.error || 'frame upload failed');
   return data;
 }
+
+export async function interpretLensFrame(question = 'What am I seeing in this Recast Lens frame?') {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/interpret`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'vision interpretation failed');
+  return data;
+}

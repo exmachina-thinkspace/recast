@@ -22,7 +22,8 @@ iPhone Safari / Recast webapp
   -> JPEG frame POST every ~750ms
   -> Recast Lens Bridge on GN100
   -> latest frame + metadata
-  -> future VSS adapter
+  -> latest-frame interpretation via local NVIDIA Cosmos/VSS-side reasoner
+  -> future temporal VSS adapter
 ```
 
 This is a v1 proof path. It proves Recast-owned iPhone camera ingestion without relying on Larix as submitted product code.
@@ -75,6 +76,8 @@ origin, and Vite forwards to this bridge.
 | `/api/recast-lens/frame` | `POST` | Accept one JPEG frame |
 | `/api/recast-lens/status` | `GET` | Return latest session/frame metadata |
 | `/api/recast-lens/latest.jpg` | `GET` | Return latest JPEG frame |
+| `/api/recast-lens/interpret` | `POST` | Ask local NVIDIA vision reasoner to describe the latest frame |
+| `/api/recast-lens/interpretation` | `GET` | Return latest interpretation |
 
 ## View On The GN100
 
@@ -91,7 +94,27 @@ http://172.16.94.151:8910/viewer
 ```
 
 The viewer refreshes the latest JPEG frame about twice per second. It is a
-display/debug view, not VSS understanding yet.
+display/debug view plus a latest-frame "What am I seeing?" interpretation.
+
+## Vision Interpretation
+
+The bridge can now interpret the latest received iPhone frame:
+
+```bash
+curl -X POST http://127.0.0.1:8910/api/recast-lens/interpret \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What am I seeing in this Recast Lens frame?"}'
+```
+
+This calls the local NVIDIA Cosmos/VSS-side vision reasoner at:
+
+```text
+http://127.0.0.1:30082/v1/chat/completions
+```
+
+This is not yet full VSS temporal search or clip retrieval. It answers the
+first demo question: "what am I seeing right now?" from the latest Recast Lens
+frame.
 
 ## Current Limitation
 

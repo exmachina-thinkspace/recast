@@ -371,3 +371,26 @@ a.linklike { color: var(--blue-ink); font-weight: 700; text-decoration: none; fo
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+
+.lens-answer {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.lens-answer p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.lens-answer span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 700;
+}

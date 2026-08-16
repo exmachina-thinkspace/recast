@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Logo, ProgressBar, Pill } from '../components.jsx';
-import { API, FRONTEND_ORIGIN, analyzeImage, askAgent, getLensBridgeHealth, sendLensFrame, transcribe } from '../api.js';
+import { API, FRONTEND_ORIGIN, analyzeImage, askAgent, getLensBridgeHealth, interpretLensFrame, sendLensFrame, transcribe } from '../api.js';
 
 const FRAME_INTERVAL_MS = 750;
 
@@ -18,6 +18,8 @@ export default function CaptureScreen({ onNext }) {
   const [bridgeStatus, setBridgeStatus] = useState('unchecked');
   const [framesSent, setFramesSent] = useState(0);
   const [lastFrameAt, setLastFrameAt] = useState(null);
+  const [interpretation, setInterpretation] = useState(null);
+  const [interpreting, setInterpreting] = useState(false);
   const [sessionId] = useState(() => `recast-lens-${Date.now()}`);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
@@ -126,6 +128,21 @@ export default function CaptureScreen({ onNext }) {
         stopFrameStream();
       }
     }, 'image/jpeg', 0.72);
+  }
+
+  async function runLensInterpretation() {
+    setInterpreting(true);
+    setError(null);
+    setInterpretation(null);
+    try {
+      const data = await interpretLensFrame();
+      setInterpretation(data);
+      setBridgeStatus('online');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setInterpreting(false);
+    }
   }
 
   async function runImageUpload(file) {
@@ -237,6 +254,16 @@ export default function CaptureScreen({ onNext }) {
             <button className="btn ghost block" onClick={stopFrameStream}>Stop stream</button>
           )}
         </div>
+        <button className="btn ghost block" disabled={!lastFrameAt || interpreting} onClick={runLensInterpretation}>
+          {interpreting ? 'Asking NVIDIA vision...' : 'What am I seeing?'}
+        </button>
+        {interpretation && (
+          <div className="lens-answer">
+            <div className="score-label">Local NVIDIA vision</div>
+            <p>{interpretation.description}</p>
+            <span>{interpretation.engine} · {interpretation.elapsed_s}s</span>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

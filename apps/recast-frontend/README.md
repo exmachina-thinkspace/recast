@@ -63,10 +63,16 @@ The `CaptureScreen` now includes a Recast-owned browser-camera path:
 iPhone browser camera
   -> Recast frontend
   -> POST JPEG frames to Recast Lens bridge on port 8910
-  -> latest frame/status for future VSS adapter
+  -> latest frame/status
+  -> latest-frame interpretation via local NVIDIA Cosmos/VSS-side reasoner
 ```
 
 This avoids Larix code and avoids the occupied `8099` prototype.
+
+The capture screen includes a `What am I seeing?` button. It asks the GN100
+bridge to interpret the latest received frame using the local NVIDIA vision
+reasoner. This is deliberately narrower than full VSS temporal search: it
+answers the current-frame demo question first.
 
 If iPhone Safari refuses camera permission from a LAN HTTP URL, serve the frontend over HTTPS or use a trusted/tunneled development origin. Browser camera APIs can require a secure context even when the bridge itself is reachable on the LAN.
 

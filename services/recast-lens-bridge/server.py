@@ -9,15 +9,19 @@ This is intentionally small and dependency-free:
 """
 
 import argparse
+import base64
 import json
 import os
 import sys
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "runtime")
 MAX_FRAME_BYTES = 6 * 1024 * 1024
+DEFAULT_COSMOS_API = os.environ.get("RECAST_COSMOS_API", "http://127.0.0.1:30082/v1/chat/completions")
+DEFAULT_COSMOS_MODEL = os.environ.get("RECAST_COSMOS_MODEL", "nvidia/cosmos3-nano-reasoner")
 
 
 class State:
@@ -25,8 +29,10 @@ class State:
         self.data_dir = data_dir
         self.latest_frame_path = os.path.join(data_dir, "latest.jpg")
         self.latest_meta_path = os.path.join(data_dir, "latest.json")
+        self.latest_interpretation_path = os.path.join(data_dir, "latest-interpretation.json")
         self.frame_count = 0
         self.latest_meta = None
+        self.latest_interpretation = None
         os.makedirs(data_dir, exist_ok=True)
 
     def write_frame(self, frame_bytes, headers):
@@ -51,6 +57,63 @@ class State:
         self.latest_meta = meta
         return meta
 
+    def interpretation_status(self):
+        if self.latest_interpretation is None and os.path.exists(self.latest_interpretation_path):
+            try:
+                with open(self.latest_interpretation_path, encoding="utf-8") as f:
+                    self.latest_interpretation = json.load(f)
+            except json.JSONDecodeError:
+                self.latest_interpretation = None
+        return {"ok": True, "latest_interpretation": self.latest_interpretation}
+
+    def interpret_latest(self, question=None):
+        if not os.path.exists(self.latest_frame_path):
+            return {"error": "no frame received yet"}
+
+        with open(self.latest_frame_path, "rb") as f:
+            image_b64 = base64.b64encode(f.read()).decode()
+
+        prompt = question or (
+            "You are interpreting a live iPhone walkthrough frame for Recast. "
+            "In 2-3 concise sentences, describe what is visible. Mention layout, "
+            "condition, people/activity, and any obvious evidence useful for "
+            "building reuse. Do not guess the building name or make claims beyond "
+            "the visible frame."
+        )
+        payload = json.dumps({
+            "model": DEFAULT_COSMOS_MODEL,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+            ]}],
+            "max_tokens": 240,
+            "temperature": 0.2,
+        }).encode()
+        req = urllib.request.Request(DEFAULT_COSMOS_API, data=payload, headers={"Content-Type": "application/json"})
+        started = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=75) as r:
+                resp = json.load(r)
+            description = resp["choices"][0]["message"].get("content") or ""
+        except Exception as exc:
+            return {"error": f"vision interpretation failed: {exc}"}
+
+        result = {
+            "ok": True,
+            "source": "latest Recast Lens frame",
+            "engine": "local NVIDIA Cosmos/VSS-side vision reasoner",
+            "model": DEFAULT_COSMOS_MODEL,
+            "description": description.strip(),
+            "question": question,
+            "frame": self.latest_meta,
+            "elapsed_s": round(time.time() - started, 2),
+            "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        with open(self.latest_interpretation_path, "w", encoding="utf-8") as f:
+            json.dump(result, f)
+        self.latest_interpretation = result
+        return result
+
     def status(self):
         if self.latest_meta is None and os.path.exists(self.latest_meta_path):
             try:
@@ -63,6 +126,7 @@ class State:
             "frame_count": self.frame_count,
             "has_frame": os.path.exists(self.latest_frame_path),
             "latest": self.latest_meta,
+            "interpretation": self.interpretation_status()["latest_interpretation"],
         }
 
 
@@ -117,6 +181,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/recast-lens/status":
             self._send_json(200, self.state.status())
             return
+        if path == "/api/recast-lens/interpretation":
+            self._send_json(200, self.state.interpretation_status())
+            return
         if path == "/api/recast-lens/latest.jpg":
             self._send_file(200, self.state.latest_frame_path, "image/jpeg")
             return
@@ -138,7 +205,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "image/jpeg")
             self.end_headers()
             return
-        if path in {"/health", "/api/recast-lens/status"}:
+        if path in {"/health", "/api/recast-lens/status", "/api/recast-lens/interpretation"}:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -148,6 +215,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/recast-lens/interpret":
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                length = 0
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                body = {}
+            result = self.state.interpret_latest(body.get("question"))
+            self._send_json(500 if result.get("error") else 200, result)
+            return
         if path != "/api/recast-lens/frame":
             self._send_json(404, {"error": "not found"})
             return
@@ -181,20 +261,24 @@ VIEWER_HTML = """<!doctype html>
     <title>Recast Lens Viewer</title>
     <style>
       :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      body { margin: 0; min-height: 100vh; background: #070a0f; color: #f5f7fb; display: grid; grid-template-rows: auto 1fr auto; }
+      body { margin: 0; min-height: 100vh; background: #070a0f; color: #f5f7fb; display: grid; grid-template-rows: auto 1fr auto auto; }
       header, footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; background: #101722; border-bottom: 1px solid #263244; }
       footer { border-top: 1px solid #263244; border-bottom: 0; color: #9aa6b8; font-size: 13px; }
       h1 { margin: 0; font-size: 16px; letter-spacing: 0; }
       .pill { padding: 5px 8px; border-radius: 5px; background: #193b2b; color: #4ee18b; font-size: 12px; font-weight: 800; }
       main { min-height: 0; display: grid; place-items: center; padding: 16px; }
-      img { max-width: 100%; max-height: calc(100vh - 112px); object-fit: contain; border: 1px solid #263244; background: #000; }
+      img { max-width: 100%; max-height: calc(100vh - 190px); object-fit: contain; border: 1px solid #263244; background: #000; }
       #meta { overflow-wrap: anywhere; }
+      #answer { padding: 12px 16px; background: #111b28; border-top: 1px solid #263244; font-size: 15px; line-height: 1.45; }
+      button { border: 0; border-radius: 5px; padding: 8px 10px; background: #2f6fed; color: #fff; font-weight: 800; cursor: pointer; }
+      button:disabled { opacity: .6; cursor: not-allowed; }
     </style>
   </head>
   <body>
     <header><h1>Recast Lens Viewer</h1><span class="pill" id="state">waiting</span></header>
     <main><img id="frame" alt="latest Recast Lens frame" /></main>
-    <footer><span id="meta">No frame yet.</span><span>refresh 2 fps</span></footer>
+    <footer><span id="meta">No frame yet.</span><button id="interpret" type="button">What am I seeing?</button></footer>
+    <div id="answer">No interpretation yet.</div>
     <script>
       async function tick() {
         const ts = Date.now();
@@ -218,6 +302,28 @@ VIEWER_HTML = """<!doctype html>
           meta.textContent = e.message;
         }
       }
+      async function interpret() {
+        const button = document.getElementById('interpret');
+        const answer = document.getElementById('answer');
+        button.disabled = true;
+        button.textContent = 'Thinking...';
+        answer.textContent = 'Asking the local NVIDIA vision reasoner...';
+        try {
+          const res = await fetch('/api/recast-lens/interpret', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: 'What am I seeing in this Recast Lens frame?' })
+          });
+          const data = await res.json();
+          answer.textContent = data.description || data.error || 'No interpretation returned.';
+        } catch (e) {
+          answer.textContent = e.message;
+        } finally {
+          button.disabled = false;
+          button.textContent = 'What am I seeing?';
+        }
+      }
+      document.getElementById('interpret').addEventListener('click', interpret);
       tick();
       setInterval(tick, 500);
     </script>
