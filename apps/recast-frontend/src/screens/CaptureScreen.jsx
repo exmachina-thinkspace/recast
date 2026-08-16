@@ -3,6 +3,7 @@ import { Logo, ProgressBar, Pill } from '../components.jsx';
 import { API, FRONTEND_ORIGIN, analyzeImage, askAgent, detectLensObjects, getLensBridgeHealth, interpretLensFrame, sendLensFrame, transcribe } from '../api.js';
 
 const FRAME_INTERVAL_MS = 750;
+const OBJECT_DETECT_INTERVAL_MS = 3500;
 
 function ObjectBoxOverlay({ objects }) {
   const detections = objects?.objects || [];
@@ -41,6 +42,9 @@ export default function CaptureScreen({ onNext }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const frameTimerRef = useRef(null);
+  const objectTimerRef = useRef(null);
+  const objectDetectionInFlightRef = useRef(false);
+  const liveObjectTrackingRef = useRef(true);
   const cameraStreamRef = useRef(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -51,6 +55,7 @@ export default function CaptureScreen({ onNext }) {
   const [interpreting, setInterpreting] = useState(false);
   const [objects, setObjects] = useState(null);
   const [detectingObjects, setDetectingObjects] = useState(false);
+  const [liveObjectTracking, setLiveObjectTracking] = useState(true);
   const [sessionId] = useState(() => `recast-lens-${Date.now()}`);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
@@ -62,6 +67,7 @@ export default function CaptureScreen({ onNext }) {
   useEffect(() => {
     checkBridge();
     return () => {
+      stopObjectTracking();
       stopFrameStream();
       stopCamera();
     };
@@ -123,6 +129,7 @@ export default function CaptureScreen({ onNext }) {
     }
     setError(null);
     setFramesSent(0);
+    setObjects(null);
     setStreaming(true);
     frameTimerRef.current = window.setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
     captureAndSendFrame();
@@ -131,7 +138,32 @@ export default function CaptureScreen({ onNext }) {
   function stopFrameStream() {
     if (frameTimerRef.current) window.clearInterval(frameTimerRef.current);
     frameTimerRef.current = null;
+    stopObjectTracking();
     setStreaming(false);
+  }
+
+  function startObjectTracking() {
+    if (objectTimerRef.current) return;
+    runObjectDetection({ clear: false, quiet: true });
+    objectTimerRef.current = window.setInterval(() => {
+      runObjectDetection({ clear: false, quiet: true });
+    }, OBJECT_DETECT_INTERVAL_MS);
+  }
+
+  function stopObjectTracking() {
+    if (objectTimerRef.current) window.clearInterval(objectTimerRef.current);
+    objectTimerRef.current = null;
+  }
+
+  function toggleObjectTracking() {
+    const next = !liveObjectTracking;
+    liveObjectTrackingRef.current = next;
+    setLiveObjectTracking(next);
+    if (next && streaming && lastFrameAt) {
+      startObjectTracking();
+    } else {
+      stopObjectTracking();
+    }
   }
 
   async function captureAndSendFrame() {
@@ -153,6 +185,7 @@ export default function CaptureScreen({ onNext }) {
         setFramesSent((count) => count + 1);
         setLastFrameAt(new Date());
         setBridgeStatus('online');
+        if (liveObjectTrackingRef.current) startObjectTracking();
       } catch (e) {
         setError(e.message);
         setBridgeStatus('offline');
@@ -176,17 +209,20 @@ export default function CaptureScreen({ onNext }) {
     }
   }
 
-  async function runObjectDetection() {
+  async function runObjectDetection({ clear = true, quiet = false } = {}) {
+    if (objectDetectionInFlightRef.current) return;
+    objectDetectionInFlightRef.current = true;
     setDetectingObjects(true);
-    setError(null);
-    setObjects(null);
+    if (!quiet) setError(null);
+    if (clear) setObjects(null);
     try {
       const data = await detectLensObjects();
       setObjects(data);
       setBridgeStatus('online');
     } catch (e) {
-      setError(e.message);
+      if (!quiet) setError(e.message);
     } finally {
+      objectDetectionInFlightRef.current = false;
       setDetectingObjects(false);
     }
   }
@@ -287,6 +323,10 @@ export default function CaptureScreen({ onNext }) {
             <span>Last frame</span>
             <strong>{lastFrameAt ? lastFrameAt.toLocaleTimeString() : 'none'}</strong>
           </div>
+          <div>
+            <span>Objects</span>
+            <strong className={liveObjectTracking ? 'ok' : ''}>{liveObjectTracking ? (detectingObjects ? 'tracking...' : 'live tracking') : 'manual'}</strong>
+          </div>
         </div>
 
         <div className="lens-controls">
@@ -306,6 +346,9 @@ export default function CaptureScreen({ onNext }) {
         </button>
         <button className="btn ghost block" disabled={!lastFrameAt || detectingObjects} onClick={runObjectDetection}>
           {detectingObjects ? 'Detecting objects...' : 'Identify objects'}
+        </button>
+        <button className={`btn ${liveObjectTracking ? 'primary' : 'ghost'} block`} disabled={!streaming && !lastFrameAt} onClick={toggleObjectTracking}>
+          {liveObjectTracking ? 'Live object tracking on' : 'Live object tracking off'}
         </button>
         {objects && (
           <div className="lens-answer">

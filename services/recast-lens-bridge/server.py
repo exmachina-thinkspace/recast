@@ -334,6 +334,7 @@ VIEWER_HTML = """<!doctype html>
       #meta { overflow-wrap: anywhere; }
       #answer { padding: 12px 16px; background: #111b28; border-top: 1px solid #263244; font-size: 15px; line-height: 1.45; }
       button { border: 0; border-radius: 5px; padding: 8px 10px; background: #2f6fed; color: #fff; font-weight: 800; cursor: pointer; }
+      button.ghost { background: #263244; }
       button:disabled { opacity: .6; cursor: not-allowed; }
     </style>
   </head>
@@ -349,12 +350,16 @@ VIEWER_HTML = """<!doctype html>
       <span id="meta">No frame yet.</span>
       <span>
         <button id="objects" type="button">Identify objects</button>
+        <button class="ghost" id="track" type="button">Live tracking on</button>
         <button id="interpret" type="button">What am I seeing?</button>
       </span>
     </footer>
     <div id="answer">No interpretation yet.</div>
     <script>
       let latestObjects = null;
+      let hasFrame = false;
+      let trackingEnabled = true;
+      let detectionInFlight = false;
 
       function renderObjectBoxes(data) {
         latestObjects = data || latestObjects;
@@ -393,12 +398,14 @@ VIEWER_HTML = """<!doctype html>
           const res = await fetch('/api/recast-lens/status?ts=' + ts, { cache: 'no-store' });
           const data = await res.json();
           if (data.has_frame) {
+            hasFrame = true;
             img.src = '/api/recast-lens/latest.jpg?ts=' + ts;
             if (data.objects) renderObjectBoxes(data.objects);
             state.textContent = 'live';
             const latest = data.latest || {};
             meta.textContent = `frame ${latest.frame_count || data.frame_count || '?'} · ${latest.bytes || '?'} bytes · ${latest.received_at_iso || 'unknown time'} · ${latest.session_id || 'no session'}`;
           } else {
+            hasFrame = false;
             state.textContent = 'waiting';
             meta.textContent = 'No frame received yet.';
             renderObjectBoxes({ objects: [] });
@@ -429,12 +436,14 @@ VIEWER_HTML = """<!doctype html>
           button.textContent = 'What am I seeing?';
         }
       }
-      async function detectObjects() {
+      async function detectObjects({ quiet = false } = {}) {
+        if (detectionInFlight) return;
+        detectionInFlight = true;
         const button = document.getElementById('objects');
         const answer = document.getElementById('answer');
         button.disabled = true;
         button.textContent = 'Detecting...';
-        answer.textContent = 'Running local YOLO object detector...';
+        if (!quiet) answer.textContent = 'Running local YOLO object detector...';
         try {
           const res = await fetch('/api/recast-lens/detect-objects', { method: 'POST' });
           const data = await res.json();
@@ -442,20 +451,30 @@ VIEWER_HTML = """<!doctype html>
             answer.textContent = data.error;
           } else {
             const summary = Object.entries(data.summary || {}).map(([label, count]) => `${label}: ${count}`).join(' · ');
-            answer.textContent = `${data.count} objects detected${summary ? ': ' + summary : '.'}`;
+            if (!quiet) answer.textContent = `${data.count} objects detected${summary ? ': ' + summary : '.'}`;
             renderObjectBoxes(data);
           }
         } catch (e) {
           answer.textContent = e.message;
         } finally {
+          detectionInFlight = false;
           button.disabled = false;
           button.textContent = 'Identify objects';
         }
       }
+      function toggleTracking() {
+        trackingEnabled = !trackingEnabled;
+        const button = document.getElementById('track');
+        button.textContent = trackingEnabled ? 'Live tracking on' : 'Live tracking off';
+      }
       document.getElementById('interpret').addEventListener('click', interpret);
       document.getElementById('objects').addEventListener('click', detectObjects);
+      document.getElementById('track').addEventListener('click', toggleTracking);
       tick();
       setInterval(tick, 500);
+      setInterval(() => {
+        if (trackingEnabled && hasFrame) detectObjects({ quiet: true });
+      }, 3500);
     </script>
   </body>
 </html>
