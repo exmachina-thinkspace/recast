@@ -8,7 +8,10 @@ import ChatScreen from './screens/ChatScreen.jsx';
 
 function App() {
   const [tab, setTab] = useState('walkthrough');
-  const [step, setStep] = useState('map');
+  const [step, setStep] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return FLOW.includes(params.get('step')) ? params.get('step') : 'map';
+  });
   const [buildingId, setBuildingId] = useState(null);
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [beforeScore, setBeforeScore] = useState(null);

@@ -52,6 +52,18 @@ Networking note:
 
 Another team member's early prototype is believed to be using `172.16.94.151:8099` on the Acer/GN100 network. Treat port `8099` as potentially occupied until verified. Recast Lens should avoid binding to that port by default and should prefer a distinct stream path such as `recast-lens-v1` on the established broker.
 
+Recast-owned v1 note:
+
+The first Recast-owned implementation path is browser-camera frame streaming, not Larix and not H.264 RTMP/RTSP yet:
+
+```text
+iPhone browser camera
+  -> Recast frontend
+  -> Recast Lens bridge on port 8910
+  -> latest JPEG frame/status
+  -> future VSS adapter
+```
+
 ## What Is Not Proven Yet
 
 The ingestion path is proven. The full "Ctrl-F for a building" VSS experience is not yet proven.

@@ -6,14 +6,21 @@
 // city-view link (Chrome couldn't route to it, same issue the voice-agent
 // tunnel already fixed).
 const DEFAULT_HOST = window.location.hostname;
+const DEFAULT_ORIGIN = window.location.origin;
+
+function trimTrailingSlash(value) {
+  return value ? value.replace(/\/+$/, '') : value;
+}
 
 export const API = {
-  buildings: `http://${DEFAULT_HOST}:8900`,
-  agent: `http://${DEFAULT_HOST}:8601`,
-  imagegen: `http://${DEFAULT_HOST}:8602`,
+  buildings: trimTrailingSlash(import.meta.env.VITE_BUILDINGS_API_URL) || `http://${DEFAULT_HOST}:8900`,
+  agent: trimTrailingSlash(import.meta.env.VITE_AGENT_API_URL) || `http://${DEFAULT_HOST}:8601`,
+  imagegen: trimTrailingSlash(import.meta.env.VITE_IMAGEGEN_API_URL) || `http://${DEFAULT_HOST}:8602`,
+  lensBridge: trimTrailingSlash(import.meta.env.VITE_LENS_BRIDGE_URL) || (window.location.protocol === 'https:' ? '' : `http://${DEFAULT_HOST}:8910`),
 };
 
-export const CITY_VIEW_URL = `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
+export const CITY_VIEW_URL = trimTrailingSlash(import.meta.env.VITE_CITY_VIEW_URL) || `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
+export const FRONTEND_ORIGIN = DEFAULT_ORIGIN;
 
 export async function getBuildings() {
   const res = await fetch(`${API.buildings}/api/buildings`);
@@ -115,4 +122,46 @@ export async function generateReuseImage({
     imageUrl: `data:${data.mime};base64,${data.image_b64}`,
     proposedUse: proposedUse.trim(),
   };
+}
+
+export async function getLensBridgeHealth() {
+  const res = await fetch(`${API.lensBridge}/health`);
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'lens bridge unavailable');
+  return data;
+}
+
+export async function sendLensFrame(blob, metadata = {}) {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/frame`, {
+    method: 'POST',
+    headers: {
+      'X-Recast-Session': metadata.sessionId || '',
+      'X-Recast-Device': metadata.deviceLabel || '',
+      'X-Recast-Source': 'recast-frontend-browser-camera',
+    },
+    body: blob,
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'frame upload failed');
+  return data;
+}
+
+export async function interpretLensFrame(question = 'What am I seeing in this Recast Lens frame?') {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/interpret`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'vision interpretation failed');
+  return data;
+}
+
+export async function detectLensObjects() {
+  const res = await fetch(`${API.lensBridge}/api/recast-lens/detect-objects`, {
+    method: 'POST',
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'object detection failed');
+  return data;
 }
