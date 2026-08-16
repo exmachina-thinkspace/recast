@@ -25,6 +25,17 @@ Current client assumptions in `src/api.js`:
 - 3D city view: port `8700`;
 - host is derived from `window.location.hostname`.
 
+These assumptions can be overridden with Vite environment variables. Start with:
+
+```bash
+cp .env.example .env.local
+```
+
+Important Recast Lens capture note: if the frontend is served over HTTPS, leave
+`VITE_LENS_BRIDGE_URL` unset and use `LENS_BRIDGE_TARGET` instead. The browser
+will call same-origin `/api/recast-lens/*`, and Vite will proxy to the GN100
+bridge server-side. That avoids Safari mixed-content blocking.
+
 ## Capture Boundary
 
 Do not make this webapp a Larix clone.
@@ -58,3 +69,74 @@ iPhone browser camera
 This avoids Larix code and avoids the occupied `8099` prototype.
 
 If iPhone Safari refuses camera permission from a LAN HTTP URL, serve the frontend over HTTPS or use a trusted/tunneled development origin. Browser camera APIs can require a secure context even when the bridge itself is reachable on the LAN.
+
+Known failure mode:
+
+```text
+http://172.16.94.172:5173/?step=capture
+```
+
+The page can display from that URL, but `Start camera` is expected to fail on
+iPhone Safari because LAN HTTP is not a secure browser origin for
+`getUserMedia`.
+
+## LAN Camera Dev
+
+For the iPhone camera button to work, the frontend must be opened from a secure
+origin such as HTTPS. One local self-signed option:
+
+```bash
+mkdir -p .local/certs
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout .local/certs/recast-lan.key \
+  -out .local/certs/recast-lan.crt \
+  -days 7 \
+  -subj "/CN=172.16.94.172" \
+  -addext "subjectAltName=IP:172.16.94.172,DNS:localhost"
+
+LENS_BRIDGE_TARGET=http://172.16.94.151:8910 \
+HTTPS_KEY=.local/certs/recast-lan.key \
+HTTPS_CERT=.local/certs/recast-lan.crt \
+npm run dev:lan
+```
+
+Then open:
+
+```text
+https://172.16.94.172:5173/?step=capture
+```
+
+The iPhone may need to trust the certificate before Safari treats the origin as
+secure. For a lower-friction demo path, use a trusted HTTPS tunnel for the
+frontend and keep `LENS_BRIDGE_TARGET=http://172.16.94.151:8910` on the dev
+machine.
+
+For a stable demo process, prefer the built frontend plus the local HTTPS proxy
+helper instead of a detached Vite dev server:
+
+```bash
+npm run build
+
+tmux new-session -d -s recast-frontend-https \
+  'cd /Users/peterchee/.openclaw/workspace-dev-ava/recast/apps/recast-frontend && \
+   python3 tools/serve_https.py \
+     --host 0.0.0.0 \
+     --port 5173 \
+     --dist dist \
+     --cert .local/certs/recast-lan.crt \
+     --key .local/certs/recast-lan.key \
+     --bridge-host 172.16.94.151 \
+     --bridge-port 8910'
+```
+
+Then open:
+
+```text
+https://172.16.94.172:5173/?step=capture
+```
+
+Smoke-test the same-origin proxy:
+
+```bash
+curl -k https://172.16.94.172:5173/health
+```

@@ -6,14 +6,20 @@
 // city-view link (Chrome couldn't route to it, same issue the voice-agent
 // tunnel already fixed).
 const DEFAULT_HOST = window.location.hostname;
+const DEFAULT_ORIGIN = window.location.origin;
+
+function trimTrailingSlash(value) {
+  return value ? value.replace(/\/+$/, '') : value;
+}
 
 export const API = {
-  buildings: `http://${DEFAULT_HOST}:8900`,
-  agent: `http://${DEFAULT_HOST}:8601`,
-  lensBridge: `http://${DEFAULT_HOST}:8910`,
+  buildings: trimTrailingSlash(import.meta.env.VITE_BUILDINGS_API_URL) || `http://${DEFAULT_HOST}:8900`,
+  agent: trimTrailingSlash(import.meta.env.VITE_AGENT_API_URL) || `http://${DEFAULT_HOST}:8601`,
+  lensBridge: trimTrailingSlash(import.meta.env.VITE_LENS_BRIDGE_URL) || (window.location.protocol === 'https:' ? '' : `http://${DEFAULT_HOST}:8910`),
 };
 
-export const CITY_VIEW_URL = `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
+export const CITY_VIEW_URL = trimTrailingSlash(import.meta.env.VITE_CITY_VIEW_URL) || `http://${DEFAULT_HOST}:8700/seattle-office-vitals-3d.html`;
+export const FRONTEND_ORIGIN = DEFAULT_ORIGIN;
 
 export async function getBuildings() {
   const res = await fetch(`${API.buildings}/api/buildings`);

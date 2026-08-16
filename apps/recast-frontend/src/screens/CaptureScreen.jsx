@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Logo, ProgressBar, Pill } from '../components.jsx';
-import { API, analyzeImage, askAgent, getLensBridgeHealth, sendLensFrame, transcribe } from '../api.js';
+import { API, FRONTEND_ORIGIN, analyzeImage, askAgent, getLensBridgeHealth, sendLensFrame, transcribe } from '../api.js';
 
 const FRAME_INTERVAL_MS = 750;
 
@@ -22,6 +22,9 @@ export default function CaptureScreen({ onNext }) {
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
+  const cameraSupported = Boolean(navigator.mediaDevices?.getUserMedia);
+  const secureCameraOrigin = window.isSecureContext;
+  const cameraBlockedByOrigin = !secureCameraOrigin || !cameraSupported;
 
   useEffect(() => {
     checkBridge();
@@ -43,6 +46,14 @@ export default function CaptureScreen({ onNext }) {
 
   async function startCamera() {
     setError(null);
+    if (!secureCameraOrigin) {
+      setError(`camera blocked: ${FRONTEND_ORIGIN} is not a secure browser origin. Open Recast over HTTPS on the phone, then try again.`);
+      return;
+    }
+    if (!cameraSupported) {
+      setError('camera blocked: this browser does not expose getUserMedia for this page. On iPhone, use Safari from an HTTPS origin.');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -171,6 +182,12 @@ export default function CaptureScreen({ onNext }) {
       <Pill tone={streaming ? 'green' : 'blue'}>{streaming ? 'Live frame stream' : 'Recast Lens v1'}</Pill>
       <h1 className="headline">Stream the iPhone camera to the GN100.</h1>
       <p className="subhead">This first version uses our own browser camera code and Recast Lens bridge on port 8910. It does not use Larix or the occupied 8099 prototype.</p>
+      {cameraBlockedByOrigin && (
+        <div className="lens-warning">
+          <strong>Camera access is blocked on this URL.</strong>
+          <span>iPhone Safari requires HTTPS for live camera access. The page can load over HTTP, but `Start camera` will not open the camera until this frontend is served from a secure origin.</span>
+        </div>
+      )}
 
       <div className="lens-panel">
         <div className="lens-video-wrap">
@@ -192,7 +209,11 @@ export default function CaptureScreen({ onNext }) {
           </div>
           <div>
             <span>Target</span>
-            <strong>{API.lensBridge.replace(/^https?:\/\//, '')}</strong>
+            <strong>{API.lensBridge ? API.lensBridge.replace(/^https?:\/\//, '') : 'same-origin proxy'}</strong>
+          </div>
+          <div>
+            <span>Origin</span>
+            <strong className={secureCameraOrigin ? 'ok' : 'bad'}>{secureCameraOrigin ? 'secure' : 'http blocked'}</strong>
           </div>
           <div>
             <span>Frames</span>
@@ -206,7 +227,7 @@ export default function CaptureScreen({ onNext }) {
 
         <div className="lens-controls">
           {!cameraReady ? (
-            <button className="btn primary block" disabled={busy} onClick={startCamera}>Start camera</button>
+            <button className="btn primary block" disabled={busy || cameraBlockedByOrigin} onClick={startCamera}>Start camera</button>
           ) : (
             <button className="btn ghost block" disabled={streaming} onClick={stopCamera}>Stop camera</button>
           )}

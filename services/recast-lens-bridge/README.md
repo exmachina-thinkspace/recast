@@ -52,6 +52,20 @@ Browser-camera note:
 
 iPhone Safari may require a secure context for `getUserMedia`. If the camera does not open from the LAN HTTP URL, serve the frontend over HTTPS or use a trusted/tunneled development origin for the phone while keeping the bridge on the GN100 LAN.
 
+If the frontend is served over HTTPS, do not point browser fetches directly at
+`http://172.16.94.151:8910`; Safari may block that as mixed content. The
+frontend dev server supports a same-origin proxy:
+
+```bash
+LENS_BRIDGE_TARGET=http://172.16.94.151:8910 \
+HTTPS_KEY=.local/certs/recast-lan.key \
+HTTPS_CERT=.local/certs/recast-lan.crt \
+npm run dev:lan
+```
+
+With that setup, the phone calls `/api/recast-lens/frame` on the HTTPS frontend
+origin, and Vite forwards to this bridge.
+
 ## Endpoints
 
 | Endpoint | Method | Purpose |

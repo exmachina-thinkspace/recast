@@ -270,6 +270,23 @@ a.linklike { color: var(--blue-ink); font-weight: 700; text-decoration: none; fo
   background: #fbfcfd;
 }
 
+.lens-warning {
+  border: 1px solid #f4b8af;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: #fff3f1;
+  color: var(--red-ink);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.lens-warning strong {
+  font-size: 13.5px;
+}
+
 .lens-video-wrap {
   position: relative;
   width: 100%;
