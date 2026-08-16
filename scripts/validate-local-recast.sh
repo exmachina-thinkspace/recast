@@ -38,7 +38,15 @@ WITH latest_run AS (
     ('tier0','source_outerspaces.availability_signal',2),
     ('tier1','source_outerspaces.availability_signal',49),
     ('tier0','source_outerspaces.seattle_building_energy_benchmarking_subset',20),
-    ('tier1','source_outerspaces.seattle_building_energy_benchmarking_subset',319)
+    ('tier1','source_outerspaces.seattle_building_energy_benchmarking_subset',319),
+    ('tier0','source_outerspaces.jll_building_availability_match_gated',1),
+    ('tier1','source_outerspaces.jll_building_availability_match_gated',20),
+    ('tier0','source_outerspaces.jll_building_availability_raw_gated',1),
+    ('tier1','source_outerspaces.jll_building_availability_raw_gated',20),
+    ('tier0','source_outerspaces.distress_seed_match_gated',1),
+    ('tier1','source_outerspaces.distress_seed_match_gated',5),
+    ('tier0','source_outerspaces.distress_seed_raw_gated',1),
+    ('tier1','source_outerspaces.distress_seed_raw_gated',5)
 ), actual AS (
   SELECT 'tier0' AS tier, 'source_outerspaces.building_profile_with_coords_subset' AS relation_name, count(*)::int AS actual_count FROM source_outerspaces.building_profile_with_coords_subset WHERE load_tier='tier0'
   UNION ALL SELECT 'tier1','source_outerspaces.building_profile_with_coords_subset', count(*)::int FROM source_outerspaces.building_profile_with_coords_subset WHERE load_tier='tier1'
@@ -54,6 +62,14 @@ WITH latest_run AS (
   UNION ALL SELECT 'tier1','source_outerspaces.availability_signal', count(*)::int FROM source_outerspaces.availability_signal WHERE load_tier='tier1'
   UNION ALL SELECT 'tier0','source_outerspaces.seattle_building_energy_benchmarking_subset', count(*)::int FROM source_outerspaces.seattle_building_energy_benchmarking_subset WHERE load_tier='tier0'
   UNION ALL SELECT 'tier1','source_outerspaces.seattle_building_energy_benchmarking_subset', count(*)::int FROM source_outerspaces.seattle_building_energy_benchmarking_subset WHERE load_tier='tier1'
+  UNION ALL SELECT 'tier0','source_outerspaces.jll_building_availability_match_gated', count(*)::int FROM source_outerspaces.jll_building_availability_match_gated WHERE load_tier='tier0'
+  UNION ALL SELECT 'tier1','source_outerspaces.jll_building_availability_match_gated', count(*)::int FROM source_outerspaces.jll_building_availability_match_gated WHERE load_tier='tier1'
+  UNION ALL SELECT 'tier0','source_outerspaces.jll_building_availability_raw_gated', count(*)::int FROM source_outerspaces.jll_building_availability_raw_gated WHERE load_tier='tier0'
+  UNION ALL SELECT 'tier1','source_outerspaces.jll_building_availability_raw_gated', count(*)::int FROM source_outerspaces.jll_building_availability_raw_gated WHERE load_tier='tier1'
+  UNION ALL SELECT 'tier0','source_outerspaces.distress_seed_match_gated', count(*)::int FROM source_outerspaces.distress_seed_match_gated WHERE load_tier='tier0'
+  UNION ALL SELECT 'tier1','source_outerspaces.distress_seed_match_gated', count(*)::int FROM source_outerspaces.distress_seed_match_gated WHERE load_tier='tier1'
+  UNION ALL SELECT 'tier0','source_outerspaces.distress_seed_raw_gated', count(*)::int FROM source_outerspaces.distress_seed_raw_gated WHERE load_tier='tier0'
+  UNION ALL SELECT 'tier1','source_outerspaces.distress_seed_raw_gated', count(*)::int FROM source_outerspaces.distress_seed_raw_gated WHERE load_tier='tier1'
 ), checks AS (
   SELECT e.tier, e.relation_name, e.expected_count, a.actual_count,
     CASE WHEN e.expected_count = a.actual_count THEN 'pass' ELSE 'fail' END AS status
@@ -88,6 +104,7 @@ UNION ALL SELECT 'recast_value_trajectory', count(*) FROM recast.building_value_
 UNION ALL SELECT 'recast_permit_activity', count(*) FROM recast.building_permit_activity
 UNION ALL SELECT 'recast_availability', count(*) FROM recast.building_availability
 UNION ALL SELECT 'recast_energy_signal', count(*) FROM recast.building_energy_signal
+UNION ALL SELECT 'recast_debt_maturity_signal', count(*) FROM recast.debt_maturity_signal
 ORDER BY relation;
 
 SELECT pg_size_pretty(pg_database_size(current_database())) AS local_recast_database_size;

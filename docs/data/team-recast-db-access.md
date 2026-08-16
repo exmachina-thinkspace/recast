@@ -113,7 +113,7 @@ Use `source_outerspaces.*` only when the UI or analysis needs underlying evidenc
 - Do not commit credentials.
 - Do not write directly to the database with the shared read-only user.
 - Do not copy the full Outerspaces database locally.
-- Do not load private JLL or distress seed data unless Peter explicitly approves the licensing/review posture.
+- Do not promote, redistribute, or show private JLL/distress seed data as verified fact unless Peter explicitly approves the licensing/review posture.
 - Keep the distinction clear:
   - `source_outerspaces` = what the source data says.
   - `recast` = what Recast derives from that evidence.

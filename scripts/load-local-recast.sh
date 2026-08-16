@@ -61,13 +61,21 @@ TRUNCATE
   source_outerspaces.permit_history_subset,
   source_outerspaces.availability_signal,
   source_outerspaces.seattle_building_energy_benchmarking_subset,
+  source_outerspaces.jll_building_availability_raw_gated,
+  source_outerspaces.jll_building_availability_match_gated,
+  source_outerspaces.distress_seed_raw_gated,
+  source_outerspaces.distress_seed_match_gated,
   recast.building,
   recast.building_value_trajectory,
   recast.building_permit_activity,
   recast.building_availability,
   recast.building_energy_signal,
   recast.building_signal_snapshot,
-  recast.building_attention_candidate
+  recast.building_attention_candidate,
+  recast.debt_instrument,
+  recast.debt_event,
+  recast.maturity_estimate,
+  recast.debt_maturity_signal
 RESTART IDENTITY;
 SQL
 
@@ -178,6 +186,18 @@ AVAIL_SELECT="availability_signal_id,building_id,market_id,source_parcel_id,addr
 ENERGY_COLS="load_tier,ose_building_id,data_year,building_name,building_type,tax_parcel_identification_number,address,latitude,longitude,year_built,number_of_floors,property_gfa_total,energy_star_score,site_eui_wn_kbtu_sf,site_eui_kbtu_sf,site_energy_use_kbtu,source_eui_kbtu_sf,electricity_kwh,natural_gas_therms,compliance_status,compliance_issue,total_ghg_emissions,ghg_emissions_intensity,jurisdiction,loaded_at,load_run_id"
 ENERGY_SELECT="ose_building_id,data_year,building_name,building_type,tax_parcel_identification_number,address,latitude,longitude,year_built,number_of_floors,property_gfa_total,energy_star_score,site_eui_wn_kbtu_sf,site_eui_kbtu_sf,site_energy_use_kbtu,source_eui_kbtu_sf,electricity_kwh,natural_gas_therms,compliance_status,compliance_issue,total_ghg_emissions,ghg_emissions_intensity,jurisdiction,loaded_at"
 
+JLL_RAW_COLS="load_tier,jll_raw_id,source_report,source_file_name,source_page,source_row_number,extracted_at,building_name,property_address,city,state,zip,submarket,property_type,rentable_building_area_sf,percent_leased,available_min_sf,available_total_sf,max_contiguous_sf,available_share_of_rba,asking_rent,rent_posture,occupancy_timing,owner_name,extraction_confidence,review_status,reviewer_notes,created_at,updated_at,load_run_id"
+JLL_RAW_SELECT="jll_raw_id,source_report,source_file_name,source_page,source_row_number,extracted_at,building_name,property_address,city,state,zip,submarket,property_type,rentable_building_area_sf,percent_leased,available_min_sf,available_total_sf,max_contiguous_sf,available_share_of_rba,asking_rent,rent_posture,occupancy_timing,owner_name,extraction_confidence,review_status,reviewer_notes,created_at,updated_at"
+
+JLL_MATCH_COLS="load_tier,jll_match_id,jll_raw_id,source_parcel_id,building_id,matched_address,matched_building_name,parcel_centroid_lat,parcel_centroid_lon,match_status,match_method,match_confidence,match_score,candidate_rank,candidate_count,review_status,reviewer_notes,created_at,updated_at,load_run_id"
+JLL_MATCH_SELECT="jll_match_id,jll_raw_id,source_parcel_id,building_id,matched_address,matched_building_name,parcel_centroid_lat,parcel_centroid_lon,match_status,match_method,match_confidence,match_score,candidate_rank,candidate_count,review_status,reviewer_notes,created_at,updated_at"
+
+DISTRESS_RAW_COLS="load_tier,seed_id,source_key,tier,cohort_initial,building_name,address,city,state,distress_types,claim_summary,vacancy_pct_claimed,availability_sf_claimed,value_decline_pct_claimed,debt_amount_claimed,evidence_status,review_status,source_note,source_urls,entered_by,entered_at,updated_at,load_run_id"
+DISTRESS_RAW_SELECT="seed_id,source_key,tier,cohort_initial,building_name,address,city,state,distress_types,claim_summary,vacancy_pct_claimed,availability_sf_claimed,value_decline_pct_claimed,debt_amount_claimed,evidence_status,review_status,source_note,source_urls,entered_by,entered_at,updated_at"
+
+DISTRESS_MATCH_COLS="load_tier,seed_id,source_key,match_status,match_method,match_confidence,market_id,building_id,source_parcel_id,matched_address,matched_building_name,parcel_centroid_lat,parcel_centroid_lon,review_notes,reviewed_by,reviewed_at,updated_at,load_run_id"
+DISTRESS_MATCH_SELECT="seed_id,source_key,match_status,match_method,match_confidence,market_id,building_id,source_parcel_id,matched_address,matched_building_name,parcel_centroid_lat,parcel_centroid_lon,review_notes,reviewed_by,reviewed_at,updated_at"
+
 copy_query source_outerspaces.market "market_id,market_name,state,country,source_jurisdiction,primary_source_system,active,created_at,updated_at,load_run_id" "SELECT market_id,market_name,state,country,source_jurisdiction,primary_source_system,active,created_at,updated_at,'$LOAD_RUN_ID' FROM warehouse.market"
 record_manifest support warehouse.market source_outerspaces.market "all rows" 3 "$(count_local source_outerspaces.market)"
 
@@ -225,6 +245,30 @@ record_manifest tier0 raw.seattle_building_energy_benchmarking source_outerspace
 
 copy_query source_outerspaces.seattle_building_energy_benchmarking_subset "$ENERGY_COLS" "$TIER1_CTE SELECT 'tier1',$ENERGY_SELECT,'$LOAD_RUN_ID' FROM (SELECT e.* FROM raw.seattle_building_energy_benchmarking e JOIN tier1_buildings t ON e.tax_parcel_identification_number=t.source_parcel_id) e"
 record_manifest tier1 raw.seattle_building_energy_benchmarking source_outerspaces.seattle_building_energy_benchmarking_subset "Tier 1 parcels" 319 "$(count_tier source_outerspaces.seattle_building_energy_benchmarking_subset tier1)"
+
+copy_query source_outerspaces.jll_building_availability_match_gated "$JLL_MATCH_COLS" "SELECT 'tier0',$JLL_MATCH_SELECT,'$LOAD_RUN_ID' FROM private.jll_building_availability_match WHERE building_id IN ('king_county_wa:0653000250:profile','king_county_wa:1975700380:profile','king_county_wa:0660000650:profile','king_county_wa:4088803750:profile')"
+record_manifest tier0 private.jll_building_availability_match source_outerspaces.jll_building_availability_match_gated "Tier 0 buildings, review-gated" 1 "$(count_tier source_outerspaces.jll_building_availability_match_gated tier0)" "private_review_gated"
+
+copy_query source_outerspaces.jll_building_availability_match_gated "$JLL_MATCH_COLS" "$TIER1_CTE SELECT 'tier1',$JLL_MATCH_SELECT,'$LOAD_RUN_ID' FROM (SELECT m.* FROM private.jll_building_availability_match m JOIN tier1_buildings t USING (building_id)) m"
+record_manifest tier1 private.jll_building_availability_match source_outerspaces.jll_building_availability_match_gated "Tier 1 buildings, review-gated" 20 "$(count_tier source_outerspaces.jll_building_availability_match_gated tier1)" "private_review_gated"
+
+copy_query source_outerspaces.jll_building_availability_raw_gated "$JLL_RAW_COLS" "SELECT 'tier0',$JLL_RAW_SELECT,'$LOAD_RUN_ID' FROM private.jll_building_availability_raw WHERE jll_raw_id IN (SELECT jll_raw_id FROM private.jll_building_availability_match WHERE building_id IN ('king_county_wa:0653000250:profile','king_county_wa:1975700380:profile','king_county_wa:0660000650:profile','king_county_wa:4088803750:profile'))"
+record_manifest tier0 private.jll_building_availability_raw source_outerspaces.jll_building_availability_raw_gated "Tier 0 matched rows, review-gated; extraction_text/raw_payload excluded" 1 "$(count_tier source_outerspaces.jll_building_availability_raw_gated tier0)" "private_review_gated"
+
+copy_query source_outerspaces.jll_building_availability_raw_gated "$JLL_RAW_COLS" "$TIER1_CTE SELECT 'tier1',$JLL_RAW_SELECT,'$LOAD_RUN_ID' FROM (SELECT r.* FROM private.jll_building_availability_raw r JOIN private.jll_building_availability_match m USING (jll_raw_id) JOIN tier1_buildings t USING (building_id)) r"
+record_manifest tier1 private.jll_building_availability_raw source_outerspaces.jll_building_availability_raw_gated "Tier 1 matched rows, review-gated; extraction_text/raw_payload excluded" 20 "$(count_tier source_outerspaces.jll_building_availability_raw_gated tier1)" "private_review_gated"
+
+copy_query source_outerspaces.distress_seed_match_gated "$DISTRESS_MATCH_COLS" "SELECT 'tier0',$DISTRESS_MATCH_SELECT,'$LOAD_RUN_ID' FROM private.build_vitals_distress_seed_match WHERE building_id IN ('king_county_wa:0653000250:profile','king_county_wa:1975700380:profile','king_county_wa:0660000650:profile','king_county_wa:4088803750:profile')"
+record_manifest tier0 private.build_vitals_distress_seed_match source_outerspaces.distress_seed_match_gated "Tier 0 buildings, review-gated" 1 "$(count_tier source_outerspaces.distress_seed_match_gated tier0)" "private_review_gated"
+
+copy_query source_outerspaces.distress_seed_match_gated "$DISTRESS_MATCH_COLS" "$TIER1_CTE SELECT 'tier1',$DISTRESS_MATCH_SELECT,'$LOAD_RUN_ID' FROM (SELECT m.* FROM private.build_vitals_distress_seed_match m JOIN tier1_buildings t USING (building_id)) m"
+record_manifest tier1 private.build_vitals_distress_seed_match source_outerspaces.distress_seed_match_gated "Tier 1 buildings, review-gated" 5 "$(count_tier source_outerspaces.distress_seed_match_gated tier1)" "private_review_gated"
+
+copy_query source_outerspaces.distress_seed_raw_gated "$DISTRESS_RAW_COLS" "SELECT 'tier0',$DISTRESS_RAW_SELECT,'$LOAD_RUN_ID' FROM private.build_vitals_distress_seed_raw WHERE seed_id IN (SELECT seed_id FROM private.build_vitals_distress_seed_match WHERE building_id IN ('king_county_wa:0653000250:profile','king_county_wa:1975700380:profile','king_county_wa:0660000650:profile','king_county_wa:4088803750:profile'))"
+record_manifest tier0 private.build_vitals_distress_seed_raw source_outerspaces.distress_seed_raw_gated "Tier 0 matched seed rows, review-gated" 1 "$(count_tier source_outerspaces.distress_seed_raw_gated tier0)" "private_review_gated"
+
+copy_query source_outerspaces.distress_seed_raw_gated "$DISTRESS_RAW_COLS" "$TIER1_CTE SELECT 'tier1',$DISTRESS_RAW_SELECT,'$LOAD_RUN_ID' FROM (SELECT r.* FROM private.build_vitals_distress_seed_raw r JOIN private.build_vitals_distress_seed_match m USING (seed_id) JOIN tier1_buildings t USING (building_id)) r"
+record_manifest tier1 private.build_vitals_distress_seed_raw source_outerspaces.distress_seed_raw_gated "Tier 1 matched seed rows, review-gated" 5 "$(count_tier source_outerspaces.distress_seed_raw_gated tier1)" "private_review_gated"
 
 export PGPASSWORD="$RECAST_DB_PASSWORD"
 "${LOCAL_PSQL[@]}" -v load_run_id="$LOAD_RUN_ID" <<'SQL'
@@ -357,6 +401,75 @@ SELECT DISTINCT ON (bp.building_id)
 FROM source_outerspaces.building_profile_with_coords_subset bp
 LEFT JOIN source_outerspaces.availability_signal a USING (building_id)
 ORDER BY bp.building_id, CASE bp.load_tier WHEN 'tier0' THEN 0 ELSE 1 END;
+
+INSERT INTO recast.debt_maturity_signal (
+  building_id, source_parcel_id, owner_entity, latest_sale_date, latest_sale_price,
+  assessed_value_peak, assessed_value_current, value_decline_amount, value_decline_percent,
+  available_sf, availability_pct, jll_percent_leased, jll_review_status,
+  distress_types, distress_claim_summary, debt_amount_claimed, legal_distress_status,
+  debt_maturity_state, evidence_label, evidence_tier, review_gated_claim_present,
+  source_refs, next_verification_step, source_load_run_id
+)
+WITH bp AS (
+  SELECT DISTINCT ON (building_id) *
+  FROM source_outerspaces.building_profile_with_coords_subset
+  ORDER BY building_id, CASE load_tier WHEN 'tier0' THEN 0 ELSE 1 END
+), jll AS (
+  SELECT DISTINCT ON (m.building_id)
+    m.building_id, m.source_parcel_id, m.jll_raw_id, m.jll_match_id,
+    r.available_total_sf, r.available_share_of_rba, r.percent_leased,
+    r.review_status, m.match_status, m.match_confidence
+  FROM source_outerspaces.jll_building_availability_match_gated m
+  JOIN source_outerspaces.jll_building_availability_raw_gated r USING (jll_raw_id, load_tier)
+  ORDER BY m.building_id, CASE m.load_tier WHEN 'tier0' THEN 0 ELSE 1 END,
+    r.available_total_sf DESC NULLS LAST
+), distress AS (
+  SELECT DISTINCT ON (m.building_id)
+    m.building_id, m.source_parcel_id, m.seed_id,
+    r.distress_types, r.claim_summary, r.debt_amount_claimed,
+    r.evidence_status, r.review_status, r.source_urls
+  FROM source_outerspaces.distress_seed_match_gated m
+  JOIN source_outerspaces.distress_seed_raw_gated r USING (seed_id, load_tier)
+  ORDER BY m.building_id, CASE m.load_tier WHEN 'tier0' THEN 0 ELSE 1 END
+)
+SELECT b.building_id, b.source_parcel_id, b.owner_proxy, b.latest_sale_date, b.latest_sale_price,
+  b.peak_assessed_value, b.current_assessed_value, b.peak_to_current_compression_value,
+  b.peak_to_current_compression_pct,
+  COALESCE(j.available_total_sf, a.availability_sf),
+  COALESCE(j.available_share_of_rba, a.availability_pct),
+  j.percent_leased,
+  j.review_status,
+  d.distress_types,
+  d.claim_summary,
+  d.debt_amount_claimed,
+  CASE WHEN d.seed_id IS NOT NULL THEN 'SOURCE_REVIEW_REQUIRED' ELSE NULL END,
+  'INSUFFICIENT_DEBT_EVIDENCE',
+  'INSUFFICIENT_EVIDENCE',
+  CASE
+    WHEN d.seed_id IS NOT NULL OR j.jll_raw_id IS NOT NULL THEN 'REVIEW_GATED_SOURCE_PRESENT'
+    ELSE 'NO_DEBT_SOURCE_REVIEWED'
+  END,
+  (d.seed_id IS NOT NULL OR j.jll_raw_id IS NOT NULL),
+  array_remove(ARRAY[
+    CASE WHEN j.jll_raw_id IS NOT NULL THEN 'jll_raw:' || j.jll_raw_id::text END,
+    CASE WHEN j.jll_match_id IS NOT NULL THEN 'jll_match:' || j.jll_match_id::text END,
+    CASE WHEN d.seed_id IS NOT NULL THEN 'distress_seed:' || d.seed_id::text END
+  ], NULL),
+  CASE
+    WHEN d.seed_id IS NOT NULL THEN 'Review distress seed source URLs and verify against recorder/court/licensed debt sources before scoring.'
+    WHEN j.jll_raw_id IS NOT NULL THEN 'Use JLL availability as prioritization; run recorder/court debt maturity workflow.'
+    ELSE 'Run recorder/court debt maturity workflow if this building becomes a debt-priority candidate.'
+  END,
+  :'load_run_id'
+FROM bp b
+LEFT JOIN jll j USING (building_id)
+LEFT JOIN distress d USING (building_id)
+LEFT JOIN recast.building_availability a USING (building_id);
+
+UPDATE recast.building_signal_snapshot s
+SET has_review_gated_private_signal = d.review_gated_claim_present
+FROM recast.debt_maturity_signal d
+WHERE s.building_id = d.building_id;
 
 UPDATE meta.load_run
 SET completed_at = now(), status = 'loaded'

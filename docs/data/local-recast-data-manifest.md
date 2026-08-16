@@ -1,6 +1,6 @@
 # Local Recast Data Manifest
 
-Status: implemented for approved Tier 0 + Tier 1 public foundation on the GB100. Private/review-gated data remains unloaded.
+Status: implemented for approved Tier 0 + Tier 1 public foundation on the GB100. Small private/review-gated JLL and distress-seed subsets are now loaded as gated source evidence, not verified Recast conclusions.
 
 Generated: 2026-08-15.
 
@@ -67,7 +67,7 @@ The approved Tier 0 + Tier 1 public foundation was loaded directly from Outerspa
 
 | Item | Result |
 | --- | --- |
-| Load run | `recast_20260815T223718Z` |
+| Load run | `recast_20260816T003657Z` |
 | Transfer | GB100 direct `psql` pull from Supabase pooler |
 | Mac staging | None |
 | Local database | `recast` |
@@ -75,9 +75,9 @@ The approved Tier 0 + Tier 1 public foundation was loaded directly from Outerspa
 | Derived schema built | `recast` |
 | Empty future schemas created | `vss`, `capital` |
 | Lineage schema | `meta` |
-| Validation | 14/14 source row-count checks passed |
-| Recorded validation | `meta.row_count_check` contains 14 checks for the successful run |
-| Database footprint | `10 MB` |
+| Validation | 22/22 source row-count checks passed |
+| Recorded validation | `meta.row_count_check` contains 22 checks for the successful run |
+| Database footprint | `11 MB` |
 
 The source tables intentionally preserve Tier 0 and Tier 1 rows separately, even when a hero building also appears in the Tier 1 attention set. Recast-derived tables dedupe those overlaps into 69 unique local buildings.
 
@@ -92,6 +92,10 @@ The source tables intentionally preserve Tier 0 and Tier 1 rows separately, even
 | `source_outerspaces.permit_history_subset` | 60 | 1,383 | loaded + validated |
 | `source_outerspaces.availability_signal` | 2 | 49 | loaded + validated |
 | `source_outerspaces.seattle_building_energy_benchmarking_subset` | 20 | 319 | loaded + validated |
+| `source_outerspaces.jll_building_availability_match_gated` | 1 | 20 | loaded + validated, review-gated |
+| `source_outerspaces.jll_building_availability_raw_gated` | 1 | 20 | loaded + validated, review-gated |
+| `source_outerspaces.distress_seed_match_gated` | 1 | 5 | loaded + validated, review-gated |
+| `source_outerspaces.distress_seed_raw_gated` | 1 | 5 | loaded + validated, review-gated |
 
 Support tables loaded:
 
@@ -111,8 +115,11 @@ Support tables loaded:
 | `recast.building_energy_signal` | 69 | Energy rows summarized where source rows exist |
 | `recast.building_permit_activity` | 69 | Permit activity summary |
 | `recast.building_value_trajectory` | 67 | Two local buildings lack usable assessed-value history in the loaded subset |
+| `recast.debt_maturity_signal` | 69 | Review-gated JLL/distress rows surfaced as debt-priority inputs; all buildings remain `INSUFFICIENT_DEBT_EVIDENCE` until recorder/court/licensed-source verification |
 
 No `capital.*` or `vss.*` rows were generated because those layers require real program-fit analysis and real VSS/video evidence, not speculative filler.
+
+The gated JLL/distress rows are available to prioritize debt-maturity research. They must not be shown as verified debt facts or legal distress until reviewed.
 
 ## Tier Definitions
 
@@ -635,7 +642,7 @@ Key fields:
 Destination:
 
 ```text
-source_outerspaces.jll_building_availability_raw_reviewed
+source_outerspaces.jll_building_availability_raw_gated
 ```
 
 Derived destination:
@@ -687,7 +694,7 @@ Key fields:
 Destination:
 
 ```text
-source_outerspaces.jll_building_availability_match_reviewed
+source_outerspaces.jll_building_availability_match_gated
 ```
 
 Derived destination:
@@ -740,7 +747,7 @@ Key fields:
 Destination:
 
 ```text
-source_outerspaces.distress_seed_raw_reviewed
+source_outerspaces.distress_seed_raw_gated
 ```
 
 Derived destination:
@@ -790,7 +797,7 @@ Key fields:
 Destination:
 
 ```text
-source_outerspaces.distress_seed_match_reviewed
+source_outerspaces.distress_seed_match_gated
 ```
 
 Derived destination:
@@ -911,10 +918,10 @@ Public GIS-derived. Exact join key to Recast building IDs was not confirmed in t
 | `permit_history_subset` | `warehouse.permit_history` | Tier 0/1 |
 | `availability_signal` | `warehouse.availability_signal` | Tier 0/1 |
 | `seattle_building_energy_benchmarking_subset` | `raw.seattle_building_energy_benchmarking` | Tier 0/1 |
-| `jll_building_availability_raw_reviewed` | `private.jll_building_availability_raw` | optional/review-gated |
-| `jll_building_availability_match_reviewed` | `private.jll_building_availability_match` | optional/review-gated |
-| `distress_seed_raw_reviewed` | `private.build_vitals_distress_seed_raw` | optional/review-gated |
-| `distress_seed_match_reviewed` | `private.build_vitals_distress_seed_match` | optional/review-gated |
+| `jll_building_availability_raw_gated` | `private.jll_building_availability_raw` | optional/review-gated |
+| `jll_building_availability_match_gated` | `private.jll_building_availability_match` | optional/review-gated |
+| `distress_seed_raw_gated` | `private.build_vitals_distress_seed_raw` | optional/review-gated |
+| `distress_seed_match_gated` | `private.build_vitals_distress_seed_match` | optional/review-gated |
 | `building_footprint_features_subset` | `raw.building_shapefile_features` | optional until join verified |
 
 ### `recast`
@@ -984,10 +991,10 @@ Generated locally:
 | `warehouse.availability_signal` | Tier 1 buildings | `source_outerspaces.availability_signal` | 49 |
 | `raw.seattle_building_energy_benchmarking` | Tier 0 parcels | `source_outerspaces.seattle_building_energy_benchmarking_subset` | 20 |
 | `raw.seattle_building_energy_benchmarking` | Tier 1 parcels | `source_outerspaces.seattle_building_energy_benchmarking_subset` | 319 |
-| `private.jll_building_availability_match` | Tier 0 buildings, reviewed only | `source_outerspaces.jll_building_availability_match_reviewed` | up to 1 |
-| `private.jll_building_availability_match` | Tier 1 buildings, reviewed only | `source_outerspaces.jll_building_availability_match_reviewed` | up to 20 |
-| `private.build_vitals_distress_seed_match` | Tier 0 buildings, reviewed only | `source_outerspaces.distress_seed_match_reviewed` | up to 1 |
-| `private.build_vitals_distress_seed_match` | Tier 1 buildings, reviewed only | `source_outerspaces.distress_seed_match_reviewed` | up to 5 |
+| `private.jll_building_availability_match` | Tier 0 buildings, review-gated | `source_outerspaces.jll_building_availability_match_gated` | up to 1 |
+| `private.jll_building_availability_match` | Tier 1 buildings, review-gated | `source_outerspaces.jll_building_availability_match_gated` | up to 20 |
+| `private.build_vitals_distress_seed_match` | Tier 0 buildings, review-gated | `source_outerspaces.distress_seed_match_gated` | up to 1 |
+| `private.build_vitals_distress_seed_match` | Tier 1 buildings, review-gated | `source_outerspaces.distress_seed_match_gated` | up to 5 |
 | `raw.building_shapefile_features` | TBD join/filter | `source_outerspaces.building_footprint_features_subset` | TBD |
 
 Counts are additive only after de-duplication. Tier 0 buildings may also satisfy the Tier 1 filter; loading logic should use upsert/deduplicate by stable IDs.

@@ -4,6 +4,34 @@ Purpose: turn the JLL availability list and Recast building universe into a defe
 
 This workflow was pulled forward from `city-of-seattle-prep/research/real-estate-debt-maturity/README.md` and adapted for Recast.
 
+## Implementation Status - 2026-08-16
+
+This workflow is now represented in the GB100 local PostgreSQL database `recast`.
+
+Loaded review-gated source tables:
+
+| Table | Tier 0 rows | Tier 1 rows | Posture |
+| --- | ---: | ---: | --- |
+| `source_outerspaces.jll_building_availability_match_gated` | 1 | 20 | Private/review-gated |
+| `source_outerspaces.jll_building_availability_raw_gated` | 1 | 20 | Private/review-gated; extraction text/raw payload excluded |
+| `source_outerspaces.distress_seed_match_gated` | 1 | 5 | Private/review-gated |
+| `source_outerspaces.distress_seed_raw_gated` | 1 | 5 | Private/review-gated |
+
+Built Recast table:
+
+| Table | Rows | Posture |
+| --- | ---: | --- |
+| `recast.debt_maturity_signal` | 69 | One row per local Recast building |
+
+Current debt signal state:
+
+| State | Evidence tier | Rows |
+| --- | --- | ---: |
+| `INSUFFICIENT_DEBT_EVIDENCE` | `REVIEW_GATED_SOURCE_PRESENT` | 21 |
+| `INSUFFICIENT_DEBT_EVIDENCE` | `NO_DEBT_SOURCE_REVIEWED` | 48 |
+
+This is intentional. JLL availability and unreviewed distress seeds can prioritize debt research, but they do not become verified debt maturity, foreclosure, receivership, or lender-action facts until recorder/court/licensed-source review is complete.
+
 ## Why It Matters
 
 Debt maturity is a separate signal from:

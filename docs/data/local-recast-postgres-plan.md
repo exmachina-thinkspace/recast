@@ -36,8 +36,8 @@ The approved foundation is now running on the Acer GN100.
 | Secrets | GB100 local files under `~/.config/recast/`, outside Git |
 | Transfer mechanism | GB100 direct `psql` pull from Outerspaces Supabase pooler |
 | Mac mini role | Orchestration only; no persistent staging DB or export directory |
-| Successful load run | `recast_20260815T223718Z` |
-| Local DB footprint | `10 MB` after Tier 0 + Tier 1 public foundation |
+| Successful load run | `recast_20260816T003657Z` |
+| Local DB footprint | `11 MB` after Tier 0 + Tier 1 public foundation plus review-gated JLL/distress rows |
 
 The loader encountered intermittent GB100 DNS resolution failures against the Supabase pooler during early attempts. The checked-in loader now retries direct copy operations and records failed runs in `meta.load_run`.
 
@@ -244,8 +244,8 @@ Curated upstream copies:
 - `availability_signal`
 - `assessed_value_history_subset`
 - `permit_history_subset`
-- `jll_building_availability_match_reviewed`
-- `distress_seed_match_reviewed`
+- `jll_building_availability_match_gated`
+- `distress_seed_match_gated`
 
 ### `recast`
 
@@ -380,7 +380,7 @@ For every table:
 - no unreviewed private rows are promoted as facts;
 - source timestamps and export timestamps are recorded.
 
-Validation is complete for source row counts. The latest successful run wrote 14 row-count checks to `meta.row_count_check`.
+Validation is complete for source row counts. The latest successful run wrote 22 row-count checks to `meta.row_count_check`.
 
 | Tier | Source relation | Expected | Actual | Status |
 | --- | --- | ---: | ---: | --- |
@@ -398,6 +398,14 @@ Validation is complete for source row counts. The latest successful run wrote 14
 | Tier 1 | `source_outerspaces.availability_signal` | 49 | 49 | pass |
 | Tier 0 | `source_outerspaces.seattle_building_energy_benchmarking_subset` | 20 | 20 | pass |
 | Tier 1 | `source_outerspaces.seattle_building_energy_benchmarking_subset` | 319 | 319 | pass |
+| Tier 0 | `source_outerspaces.jll_building_availability_match_gated` | 1 | 1 | pass |
+| Tier 1 | `source_outerspaces.jll_building_availability_match_gated` | 20 | 20 | pass |
+| Tier 0 | `source_outerspaces.jll_building_availability_raw_gated` | 1 | 1 | pass |
+| Tier 1 | `source_outerspaces.jll_building_availability_raw_gated` | 20 | 20 | pass |
+| Tier 0 | `source_outerspaces.distress_seed_match_gated` | 1 | 1 | pass |
+| Tier 1 | `source_outerspaces.distress_seed_match_gated` | 5 | 5 | pass |
+| Tier 0 | `source_outerspaces.distress_seed_raw_gated` | 1 | 1 | pass |
+| Tier 1 | `source_outerspaces.distress_seed_raw_gated` | 5 | 5 | pass |
 
 Derived local Recast row counts after Tier overlap dedupe:
 
@@ -410,8 +418,11 @@ Derived local Recast row counts after Tier overlap dedupe:
 | `recast.building_energy_signal` | 69 |
 | `recast.building_permit_activity` | 69 |
 | `recast.building_value_trajectory` | 67 |
+| `recast.debt_maturity_signal` | 69 |
 
 `recast.building_value_trajectory` has 67 rows because two of the 69 unique local buildings do not currently have usable assessed-value history in the loaded source subset.
+
+`recast.debt_maturity_signal` currently keeps all buildings at `INSUFFICIENT_DEBT_EVIDENCE`. It records whether review-gated JLL/distress source rows exist, but it does not treat those rows as verified debt maturity or legal distress until recorder/court/licensed-source review is complete.
 
 ### 7. Cutover For Demo
 
@@ -457,4 +468,4 @@ Still open:
 
 Connect the Recast application/API to local PostgreSQL in read-only mode, using `recast.*` for product intelligence and `source_outerspaces.*` only when the UI needs to show underlying evidence.
 
-Do not load private/review-gated data until licensing and judge-facing posture are resolved.
+Do not promote private/review-gated data into factual Recast conclusions or judge-facing claims until licensing, source review, and evidence posture are resolved.

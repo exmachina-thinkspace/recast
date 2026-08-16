@@ -283,6 +283,109 @@ CREATE TABLE IF NOT EXISTS source_outerspaces.seattle_building_energy_benchmarki
   load_run_id text
 );
 
+CREATE TABLE IF NOT EXISTS source_outerspaces.jll_building_availability_raw_gated (
+  load_tier text NOT NULL,
+  jll_raw_id uuid,
+  source_report text,
+  source_file_name text,
+  source_page integer,
+  source_row_number integer,
+  extracted_at timestamptz,
+  building_name text,
+  property_address text,
+  city text,
+  state text,
+  zip text,
+  submarket text,
+  property_type text,
+  rentable_building_area_sf numeric,
+  percent_leased numeric,
+  available_min_sf numeric,
+  available_total_sf numeric,
+  max_contiguous_sf numeric,
+  available_share_of_rba numeric,
+  asking_rent text,
+  rent_posture text,
+  occupancy_timing text,
+  owner_name text,
+  extraction_confidence text,
+  review_status text,
+  reviewer_notes text,
+  created_at timestamptz,
+  updated_at timestamptz,
+  load_run_id text
+);
+
+CREATE TABLE IF NOT EXISTS source_outerspaces.jll_building_availability_match_gated (
+  load_tier text NOT NULL,
+  jll_match_id uuid,
+  jll_raw_id uuid,
+  source_parcel_id text,
+  building_id text,
+  matched_address text,
+  matched_building_name text,
+  parcel_centroid_lat numeric,
+  parcel_centroid_lon numeric,
+  match_status text,
+  match_method text,
+  match_confidence text,
+  match_score numeric,
+  candidate_rank integer,
+  candidate_count integer,
+  review_status text,
+  reviewer_notes text,
+  created_at timestamptz,
+  updated_at timestamptz,
+  load_run_id text
+);
+
+CREATE TABLE IF NOT EXISTS source_outerspaces.distress_seed_raw_gated (
+  load_tier text NOT NULL,
+  seed_id bigint,
+  source_key text,
+  tier text,
+  cohort_initial boolean,
+  building_name text,
+  address text,
+  city text,
+  state text,
+  distress_types text[],
+  claim_summary text,
+  vacancy_pct_claimed numeric,
+  availability_sf_claimed numeric,
+  value_decline_pct_claimed numeric,
+  debt_amount_claimed numeric,
+  evidence_status text,
+  review_status text,
+  source_note text,
+  source_urls text[],
+  entered_by text,
+  entered_at timestamptz,
+  updated_at timestamptz,
+  load_run_id text
+);
+
+CREATE TABLE IF NOT EXISTS source_outerspaces.distress_seed_match_gated (
+  load_tier text NOT NULL,
+  seed_id bigint,
+  source_key text,
+  match_status text,
+  match_method text,
+  match_confidence text,
+  market_id text,
+  building_id text,
+  source_parcel_id text,
+  matched_address text,
+  matched_building_name text,
+  parcel_centroid_lat numeric,
+  parcel_centroid_lon numeric,
+  review_notes text,
+  reviewed_by text,
+  reviewed_at timestamptz,
+  updated_at timestamptz,
+  load_run_id text
+);
+
 CREATE TABLE IF NOT EXISTS recast.building (
   building_id text PRIMARY KEY,
   source_parcel_id text,
@@ -392,6 +495,99 @@ CREATE TABLE IF NOT EXISTS recast.building_recast_option (
   rank integer,
   evidence_label text,
   notes text
+);
+
+CREATE TABLE IF NOT EXISTS recast.debt_instrument (
+  debt_instrument_id bigserial PRIMARY KEY,
+  building_id text,
+  source_parcel_id text,
+  recording_number text,
+  document_type text,
+  recording_date date,
+  instrument_date date,
+  grantor_borrower text,
+  grantee_beneficiary_lender text,
+  trustee text,
+  loan_amount numeric,
+  legal_description_present boolean,
+  source_document_reference text,
+  source_url_or_path text,
+  checksum text,
+  extraction_method text,
+  evidence_label text,
+  confidence text,
+  notes text,
+  source_load_run_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS recast.debt_event (
+  debt_event_id bigserial PRIMARY KEY,
+  debt_instrument_id bigint REFERENCES recast.debt_instrument(debt_instrument_id),
+  building_id text,
+  source_parcel_id text,
+  event_type text,
+  event_date date,
+  event_source text,
+  event_description text,
+  lender_or_beneficiary text,
+  trustee text,
+  amount numeric,
+  evidence_label text,
+  confidence text,
+  source_load_run_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS recast.maturity_estimate (
+  maturity_estimate_id bigserial PRIMARY KEY,
+  debt_instrument_id bigint REFERENCES recast.debt_instrument(debt_instrument_id),
+  building_id text,
+  source_parcel_id text,
+  known_maturity_date date,
+  inferred_maturity_start date,
+  inferred_maturity_end date,
+  maturity_basis text,
+  maturity_source text,
+  evidence_label text,
+  confidence text,
+  needs_manual_review boolean NOT NULL DEFAULT true,
+  notes text,
+  source_load_run_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS recast.debt_maturity_signal (
+  building_id text PRIMARY KEY,
+  source_parcel_id text,
+  owner_entity text,
+  latest_sale_date date,
+  latest_sale_price numeric,
+  latest_debt_event_date date,
+  latest_debt_event_type text,
+  latest_lender text,
+  known_maturity_date date,
+  inferred_maturity_window text,
+  assessed_value_peak numeric,
+  assessed_value_current numeric,
+  value_decline_amount numeric,
+  value_decline_percent numeric,
+  available_sf numeric,
+  availability_pct numeric,
+  jll_percent_leased numeric,
+  jll_review_status text,
+  distress_types text[],
+  distress_claim_summary text,
+  debt_amount_claimed numeric,
+  legal_distress_status text,
+  debt_maturity_state text NOT NULL,
+  evidence_label text NOT NULL,
+  evidence_tier text NOT NULL,
+  review_gated_claim_present boolean NOT NULL DEFAULT false,
+  source_refs text[],
+  next_verification_step text,
+  source_load_run_id text,
+  generated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS vss.capture_session (
