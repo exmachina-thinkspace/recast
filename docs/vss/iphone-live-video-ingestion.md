@@ -48,6 +48,10 @@ The iPhone path is more useful than a fixed camera for a building walkthrough be
 
 Audio should remain off unless explicitly tested. The verified path avoided audio because audio tracks introduced compatibility problems in VIOS registration.
 
+Networking note:
+
+Another team member's early prototype is believed to be using `172.16.94.151:8099` on the Acer/GN100 network. Treat port `8099` as potentially occupied until verified. Recast Lens should avoid binding to that port by default and should prefer a distinct stream path such as `recast-lens-v1` on the established broker.
+
 ## What Is Not Proven Yet
 
 The ingestion path is proven. The full "Ctrl-F for a building" VSS experience is not yet proven.

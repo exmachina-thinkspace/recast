@@ -2,6 +2,10 @@
 
 Status: planning/recon only. No app code has been written in this repo yet.
 
+Compound Engineering plan:
+
+[`../plans/recast-lens-compound-engineering-plan.md`](../plans/recast-lens-compound-engineering-plan.md)
+
 ## Goal
 
 Create a Recast-native iPhone app that turns a building walkthrough into structured physical evidence for NVIDIA VSS and the Recast building intelligence layer.
@@ -58,6 +62,12 @@ Keep MVP small:
 - no overlay editor;
 - no account-heavy workflow unless required for demo;
 - no on-device AI requirement.
+
+## V1 Network Note
+
+Another team member's early prototype is believed to be using the Acer/GN100 host at `172.16.94.151` with port `8099`.
+
+For Recast Lens v1, do not assume `8099` is available. Confirm the running services before binding or publishing to that port. Prefer a Recast-specific MediaMTX path such as `recast-lens-v1` on the established broker, or choose a separate port only after checking for conflicts.
 
 ## Core Interfaces To Own
 
