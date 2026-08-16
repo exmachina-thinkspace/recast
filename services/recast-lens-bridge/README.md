@@ -19,7 +19,7 @@ Current flow:
 ```text
 iPhone Safari / Recast webapp
   -> getUserMedia camera preview
-  -> JPEG frame POST every ~750ms
+  -> lightweight JPEG frame POST about every 200ms
   -> Recast Lens Bridge on GN100
   -> latest frame + metadata
   -> object identification via local YOLO
@@ -96,9 +96,30 @@ From another LAN machine:
 http://172.16.94.151:8910/viewer
 ```
 
-The viewer refreshes the latest JPEG frame about twice per second. It is a
+The viewer refreshes the latest JPEG frame about five times per second. It is a
 display/debug view plus latest-frame object detection and "What am I seeing?"
 interpretation.
+
+Current performance profile:
+
+```text
+frontend frame capture: ~200ms
+frontend frame width: 640px
+frontend JPEG quality: 0.55
+viewer refresh: ~200ms
+object detection: ~5000ms, non-overlapping and globally locked
+```
+
+The viewer marks frames as `stale` when no new iPhone frame has arrived for
+more than five seconds. If the viewer is stale, restart the phone stream before
+debugging object detection.
+
+The live image refresh and AI overlay are intentionally separate loops. Video
+should keep moving even when object detection is still thinking.
+
+The bridge enforces a single object-detection pass at a time and returns cached
+results while a pass is running or the latest detection is still fresh. This
+protects the GN100 if multiple viewer/capture tabs are open during the demo.
 
 ## Vision Interpretation
 
@@ -144,3 +165,6 @@ or chair. Distance estimation is intentionally not claimed here.
 This bridge receives frame-streamed JPEGs, not H.264 RTMP/RTSP video.
 
 That is intentional for the first no-Larix proof. A later Recast Lens native app or WebRTC/WHIP path can replace this transport while keeping the same Recast evidence model.
+
+The next performance step should replace JPEG polling with a real live-video
+transport, then keep YOLO/VSS/Cosmos as slower sampled-frame evidence lanes.

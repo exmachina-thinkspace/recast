@@ -227,6 +227,41 @@ Acceptance:
 - port `8099` remains untouched;
 - docs clearly state this is frame-stream v1, not H.264 RTMP/RTSP yet.
 
+Implementation notes from the first working pass:
+
+- Recast-owned browser capture successfully opened the iPhone camera from an HTTPS frontend.
+- Frames reached the GN100 bridge on port `8910`.
+- The GN100 viewer displayed incoming frames.
+- Latest-frame NVIDIA vision interpretation answered "what am I seeing?"
+- Local YOLO object identification found common objects and returned labels, confidence, and boxes.
+- Bounding boxes were overlaid on the phone capture screen and GN100 viewer.
+- Live tracking was added as a repeated detector pass over the latest frame.
+
+Compound lesson:
+
+Do not let object detection drive the apparent video stream. The video refresh path and AI interpretation path must be separated:
+
+```text
+fast path: iPhone frame/video transport -> viewer refresh
+slow path: sampled latest frame -> YOLO/VSS/Cosmos -> overlay/evidence
+```
+
+The JPEG-frame path is acceptable as a no-Larix proof of ownership, but it is not the final live-video architecture. For the next transport pass, prefer H.264/WebRTC/RTMP via a Recast-owned adapter while continuing to sample frames for VSS/object evidence.
+
+Current v1 performance profile:
+
+- frontend frame capture: about every `200ms`;
+- frame width: `640px`;
+- JPEG quality: `0.55`;
+- viewer refresh: about every `200ms`;
+- object detection cadence: about every `5000ms`, non-overlapping in the browser and globally locked on the bridge.
+
+This should make the viewer feel live while keeping AI overlays asynchronous. If the viewer shows `stale`, the phone is not currently uploading frames to the bridge.
+
+Regression note:
+
+Running YOLO from multiple viewer/capture tabs can saturate the GN100 if each tab starts its own detector loop. The bridge must enforce one detector pass at a time and return cached detections while a new pass is running or while the cache is still fresh. Live video refresh is the priority; AI overlays are allowed to lag.
+
 ### Spike 4 - Capital Stack Panel
 
 Goal:

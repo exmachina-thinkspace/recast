@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +23,9 @@ from urllib.parse import urlparse
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "runtime")
 MAX_FRAME_BYTES = 6 * 1024 * 1024
 LIVE_FRAME_MAX_AGE_S = 5
+VIEWER_REFRESH_INTERVAL_MS = 200
+OBJECT_DETECT_INTERVAL_MS = 5000
+OBJECT_DETECT_MIN_INTERVAL_S = 4
 DEFAULT_COSMOS_API = os.environ.get("RECAST_COSMOS_API", "http://127.0.0.1:30082/v1/chat/completions")
 DEFAULT_COSMOS_MODEL = os.environ.get("RECAST_COSMOS_MODEL", "nvidia/cosmos3-nano-reasoner")
 DEFAULT_DETECTOR_PYTHON = os.environ.get("RECAST_DETECTOR_PYTHON", "/home/acer01/arlo-vision/bin/python")
@@ -40,6 +44,7 @@ class State:
         self.latest_meta = None
         self.latest_interpretation = None
         self.latest_objects = None
+        self.detect_lock = threading.Lock()
         os.makedirs(data_dir, exist_ok=True)
 
     def write_frame(self, frame_bytes, headers):
@@ -134,37 +139,58 @@ class State:
         if not os.path.exists(self.latest_frame_path):
             return {"error": "no frame received yet"}
 
+        cached = self.object_status()["latest_objects"]
+        if cached and cached.get("created_at_epoch"):
+            age = time.time() - float(cached["created_at_epoch"])
+            if age < OBJECT_DETECT_MIN_INTERVAL_S:
+                cached["cached"] = True
+                cached["cache_age_s"] = round(age, 2)
+                return cached
+
+        if not self.detect_lock.acquire(blocking=False):
+            cached = self.object_status()["latest_objects"]
+            if cached:
+                cached["cached"] = True
+                cached["in_flight"] = True
+                return cached
+            return {"error": "object detection already running"}
+
         started = time.time()
-        cmd = [
-            DEFAULT_DETECTOR_PYTHON,
-            DEFAULT_DETECTOR_SCRIPT,
-            self.latest_frame_path,
-            "--model",
-            DEFAULT_YOLO_MODEL,
-        ]
         try:
-            proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=45)
-        except Exception as exc:
-            return {"error": f"object detection failed: {exc}"}
-        if proc.returncode != 0:
-            detail = (proc.stdout or proc.stderr or "").strip()
-            return {"error": f"object detection failed: {detail or proc.returncode}"}
-        try:
-            result = json.loads(proc.stdout)
-        except json.JSONDecodeError:
-            return {"error": "object detection returned invalid JSON"}
-        if result.get("error"):
+            cmd = [
+                DEFAULT_DETECTOR_PYTHON,
+                DEFAULT_DETECTOR_SCRIPT,
+                self.latest_frame_path,
+                "--model",
+                DEFAULT_YOLO_MODEL,
+            ]
+            try:
+                proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=45)
+            except Exception as exc:
+                return {"error": f"object detection failed: {exc}"}
+            if proc.returncode != 0:
+                detail = (proc.stdout or proc.stderr or "").strip()
+                return {"error": f"object detection failed: {detail or proc.returncode}"}
+            try:
+                result = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                return {"error": "object detection returned invalid JSON"}
+            if result.get("error"):
+                return result
+            now = time.time()
+            result.update({
+                "source": "latest Recast Lens frame",
+                "frame": self.latest_meta,
+                "elapsed_s": round(now - started, 2),
+                "created_at_epoch": now,
+                "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+            })
+            with open(self.latest_objects_path, "w", encoding="utf-8") as f:
+                json.dump(result, f)
+            self.latest_objects = result
             return result
-        result.update({
-            "source": "latest Recast Lens frame",
-            "frame": self.latest_meta,
-            "elapsed_s": round(time.time() - started, 2),
-            "created_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        })
-        with open(self.latest_objects_path, "w", encoding="utf-8") as f:
-            json.dump(result, f)
-        self.latest_objects = result
-        return result
+        finally:
+            self.detect_lock.release()
 
     def status(self):
         if self.latest_meta is None and os.path.exists(self.latest_meta_path):
@@ -343,6 +369,7 @@ VIEWER_HTML = """<!doctype html>
       .object-box { position: absolute; border: 2px solid #4ee18b; box-shadow: 0 0 0 1px rgba(7, 10, 15, .72), 0 0 18px rgba(78, 225, 139, .22); }
       .object-box span { position: absolute; left: -2px; top: -25px; max-width: 160px; padding: 4px 6px; border-radius: 4px 4px 4px 0; background: rgba(7, 10, 15, .86); color: #f5f7fb; font-size: 10.5px; font-weight: 900; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       #meta { overflow-wrap: anywhere; }
+      #aiMeta { color: #c8d0dc; font-size: 12px; overflow-wrap: anywhere; }
       #answer { padding: 12px 16px; background: #111b28; border-top: 1px solid #263244; font-size: 15px; line-height: 1.45; }
       button { border: 0; border-radius: 5px; padding: 8px 10px; background: #2f6fed; color: #fff; font-weight: 800; cursor: pointer; }
       button.ghost { background: #263244; }
@@ -365,6 +392,7 @@ VIEWER_HTML = """<!doctype html>
         <button id="interpret" type="button">What am I seeing?</button>
       </span>
     </footer>
+    <div id="aiMeta">AI overlay: waiting for object detection.</div>
     <div id="answer">No interpretation yet.</div>
     <script>
       let latestObjects = null;
@@ -375,10 +403,17 @@ VIEWER_HTML = """<!doctype html>
       function renderObjectBoxes(data) {
         latestObjects = data || latestObjects;
         const layer = document.getElementById('boxLayer');
+        const aiMeta = document.getElementById('aiMeta');
         layer.innerHTML = '';
         const objects = latestObjects?.objects || [];
         const size = latestObjects?.image_size || {};
-        if (!objects.length || !size.width || !size.height) return;
+        if (!objects.length || !size.width || !size.height) {
+          aiMeta.textContent = 'AI overlay: no detected objects yet.';
+          return;
+        }
+        const age = latestObjects?.created_at_iso ? Math.max(0, Math.round((Date.now() - new Date(latestObjects.created_at_iso).getTime()) / 1000)) : null;
+        const summary = Object.entries(latestObjects.summary || {}).map(([label, count]) => `${label}: ${count}`).join(' · ');
+        aiMeta.textContent = `AI overlay: ${objects.length} objects${summary ? ' · ' + summary : ''}${age !== null ? ' · updated ' + age + 's ago' : ''}`;
         for (const [index, obj] of objects.slice(0, 20).entries()) {
           const box = obj.bbox_xyxy || [];
           if (box.length !== 4) continue;
@@ -486,11 +521,11 @@ VIEWER_HTML = """<!doctype html>
       document.getElementById('objects').addEventListener('click', detectObjects);
       document.getElementById('track').addEventListener('click', toggleTracking);
       tick();
-      setInterval(tick, 500);
+      setInterval(tick, """ + str(VIEWER_REFRESH_INTERVAL_MS) + """);
       setInterval(() => {
         const state = document.getElementById('state');
         if (trackingEnabled && hasFrame && state.textContent === 'live') detectObjects({ quiet: true });
-      }, 3500);
+      }, """ + str(OBJECT_DETECT_INTERVAL_MS) + """);
     </script>
   </body>
 </html>

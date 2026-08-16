@@ -2,8 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import { Logo, ProgressBar, Pill } from '../components.jsx';
 import { API, FRONTEND_ORIGIN, analyzeImage, askAgent, detectLensObjects, getLensBridgeHealth, interpretLensFrame, sendLensFrame, transcribe } from '../api.js';
 
-const FRAME_INTERVAL_MS = 750;
-const OBJECT_DETECT_INTERVAL_MS = 3500;
+const FRAME_INTERVAL_MS = 200;
+const FRAME_TARGET_WIDTH = 640;
+const FRAME_JPEG_QUALITY = 0.55;
+const OBJECT_DETECT_INTERVAL_MS = 5000;
+
+function formatObjectFreshness(objects) {
+  if (!objects?.created_at_iso) return 'none';
+  const ageSeconds = Math.max(0, Math.round((Date.now() - new Date(objects.created_at_iso).getTime()) / 1000));
+  return `${ageSeconds}s ago`;
+}
 
 function ObjectBoxOverlay({ objects }) {
   const detections = objects?.objects || [];
@@ -171,7 +179,7 @@ export default function CaptureScreen({ onNext }) {
     const canvas = canvasRef.current;
     if (!video || !canvas || !video.videoWidth || !video.videoHeight) return;
 
-    const targetWidth = 960;
+    const targetWidth = FRAME_TARGET_WIDTH;
     const targetHeight = Math.round((video.videoHeight / video.videoWidth) * targetWidth);
     canvas.width = targetWidth;
     canvas.height = targetHeight;
@@ -191,7 +199,7 @@ export default function CaptureScreen({ onNext }) {
         setBridgeStatus('offline');
         stopFrameStream();
       }
-    }, 'image/jpeg', 0.72);
+    }, 'image/jpeg', FRAME_JPEG_QUALITY);
   }
 
   async function runLensInterpretation() {
@@ -327,6 +335,10 @@ export default function CaptureScreen({ onNext }) {
             <span>Objects</span>
             <strong className={liveObjectTracking ? 'ok' : ''}>{liveObjectTracking ? (detectingObjects ? 'tracking...' : 'live tracking') : 'manual'}</strong>
           </div>
+          <div>
+            <span>AI updated</span>
+            <strong>{formatObjectFreshness(objects)}</strong>
+          </div>
         </div>
 
         <div className="lens-controls">
@@ -355,7 +367,7 @@ export default function CaptureScreen({ onNext }) {
             <div className="score-label">Local object detector</div>
             <p>{objects.count} objects detected{Object.keys(objects.summary || {}).length ? `: ${Object.entries(objects.summary).map(([label, count]) => `${label} ${count}`).join(', ')}` : '.'}</p>
             {objects.objects?.length > 0 && (
-              <span>{objects.objects.slice(0, 6).map((obj) => `${obj.label} ${(obj.confidence * 100).toFixed(0)}%`).join(' · ')}</span>
+              <span>{objects.objects.slice(0, 6).map((obj) => `${obj.label} ${(obj.confidence * 100).toFixed(0)}%`).join(' · ')} · AI {formatObjectFreshness(objects)}</span>
             )}
           </div>
         )}
