@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "runtime")
 MAX_FRAME_BYTES = 6 * 1024 * 1024
+LIVE_FRAME_MAX_AGE_S = 5
 DEFAULT_COSMOS_API = os.environ.get("RECAST_COSMOS_API", "http://127.0.0.1:30082/v1/chat/completions")
 DEFAULT_COSMOS_MODEL = os.environ.get("RECAST_COSMOS_MODEL", "nvidia/cosmos3-nano-reasoner")
 DEFAULT_DETECTOR_PYTHON = os.environ.get("RECAST_DETECTOR_PYTHON", "/home/acer01/arlo-vision/bin/python")
@@ -172,10 +173,15 @@ class State:
                     self.latest_meta = json.load(f)
             except json.JSONDecodeError:
                 self.latest_meta = None
+        frame_age_s = None
+        if self.latest_meta and self.latest_meta.get("received_at"):
+            frame_age_s = round(time.time() - float(self.latest_meta["received_at"]), 2)
         return {
             "ok": True,
             "frame_count": self.frame_count,
             "has_frame": os.path.exists(self.latest_frame_path),
+            "frame_age_s": frame_age_s,
+            "is_live": frame_age_s is not None and frame_age_s <= LIVE_FRAME_MAX_AGE_S,
             "latest": self.latest_meta,
             "interpretation": self.interpretation_status()["latest_interpretation"],
             "objects": self.object_status()["latest_objects"],
@@ -190,6 +196,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(payload)
@@ -199,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Recast-Session, X-Recast-Device, X-Recast-Source")
@@ -215,6 +223,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(payload)
@@ -325,6 +334,8 @@ VIEWER_HTML = """<!doctype html>
       footer { border-top: 1px solid #263244; border-bottom: 0; color: #9aa6b8; font-size: 13px; }
       h1 { margin: 0; font-size: 16px; letter-spacing: 0; }
       .pill { padding: 5px 8px; border-radius: 5px; background: #193b2b; color: #4ee18b; font-size: 12px; font-weight: 800; }
+      .pill.stale { background: #3a2b16; color: #f3b955; }
+      .pill.offline { background: #3b1919; color: #ff8a7d; }
       main { min-height: 0; display: grid; place-items: center; padding: 16px; }
       #frameShell { position: relative; display: inline-block; max-width: 100%; }
       img { display: block; max-width: 100%; max-height: calc(100vh - 190px); object-fit: contain; border: 1px solid #263244; background: #000; }
@@ -401,17 +412,21 @@ VIEWER_HTML = """<!doctype html>
             hasFrame = true;
             img.src = '/api/recast-lens/latest.jpg?ts=' + ts;
             if (data.objects) renderObjectBoxes(data.objects);
-            state.textContent = 'live';
+            state.textContent = data.is_live ? 'live' : 'stale';
+            state.className = data.is_live ? 'pill' : 'pill stale';
             const latest = data.latest || {};
-            meta.textContent = `frame ${latest.frame_count || data.frame_count || '?'} · ${latest.bytes || '?'} bytes · ${latest.received_at_iso || 'unknown time'} · ${latest.session_id || 'no session'}`;
+            const age = typeof data.frame_age_s === 'number' ? ` · ${data.frame_age_s}s old` : '';
+            meta.textContent = `frame ${latest.frame_count || data.frame_count || '?'} · ${latest.bytes || '?'} bytes · ${latest.received_at_iso || 'unknown time'}${age} · ${latest.session_id || 'no session'}`;
           } else {
             hasFrame = false;
             state.textContent = 'waiting';
+            state.className = 'pill offline';
             meta.textContent = 'No frame received yet.';
             renderObjectBoxes({ objects: [] });
           }
         } catch (e) {
           state.textContent = 'offline';
+          state.className = 'pill offline';
           meta.textContent = e.message;
         }
       }
@@ -473,7 +488,8 @@ VIEWER_HTML = """<!doctype html>
       tick();
       setInterval(tick, 500);
       setInterval(() => {
-        if (trackingEnabled && hasFrame) detectObjects({ quiet: true });
+        const state = document.getElementById('state');
+        if (trackingEnabled && hasFrame && state.textContent === 'live') detectObjects({ quiet: true });
       }, 3500);
     </script>
   </body>
