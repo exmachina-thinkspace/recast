@@ -1,0 +1,79 @@
+# Camera / zone configuration for the hero building (Lake Union Building,
+# 1700 Westlake Ave N). Owned by Namratha per responsibility(1).md section 6.
+#
+# Source of truth for RTSP paths is Scrypted, not this file — tokens rotate
+# and are never committed here (see spark-3d-pipeline/SPARK-HANDOFF.md
+# section 6). This file maps camera identity -> zone -> env var name only.
+#
+# Six Arlo cameras exist at the site. Only three currently expose Cloud RTSP
+# (the other three lack Scrypted's Rebroadcast mixin — tracked as a Peter/
+# Craig follow-up, not a vision-bridge bug).
+
+building_id: BV_SEA_1700WESTLAKE
+
+cameras:
+  - id: lobby-2f
+    zone: floor-02-lobby
+    label: "2F Lobby"
+    rtsp_env: RTSP_LOBBY
+    status: active
+    stream_properties:
+      codec: HEVC/H.265 Main
+      resolution: 2560x1440
+      fps: 24
+      audio: AAC LC 16kHz mono
+    notes: "Primary hero-camera stream. live_detect.py runs ~33fps against this feed."
+
+  - id: common-1f
+    zone: floor-01-common-area
+    label: "1F Common Area"
+    rtsp_env: RTSP_COMMON
+    status: active
+    stream_properties:
+      codec: HEVC/H.265 Main
+      resolution: 2560x1440
+      fps: 24
+      audio: AAC LC 16kHz mono
+    notes: "Feeds the community/ground-floor-activation vital."
+
+  - id: sw-hallway-2f
+    zone: floor-02-sw-hallway
+    label: "2F SW Hallway"
+    rtsp_env: RTSP_SWHALL
+    status: active
+    stream_properties:
+      codec: HEVC/H.265 Main
+      resolution: 2560x1440
+      fps: 24
+      audio: AAC LC 16kHz mono
+    notes: null
+
+  - id: storage-1f
+    zone: floor-01-storage
+    label: "1F Storage"
+    rtsp_env: null
+    status: dark
+    notes: "No Cloud RTSP exposed. Needs Scrypted Rebroadcast mixin enabled (Peter)."
+
+  - id: nw-hallway-2f
+    zone: floor-02-nw-hallway
+    label: "2F NW Hallway"
+    rtsp_env: null
+    status: dark
+    notes: "No Cloud RTSP exposed. Needs Scrypted Rebroadcast mixin enabled (Peter)."
+
+  - id: front-door
+    zone: exterior-front-door
+    label: "Front Door"
+    rtsp_env: null
+    status: dark
+    notes: "No Cloud RTSP exposed. Needs Scrypted Rebroadcast mixin enabled (Peter)."
+
+calibration:
+  status: not_done
+  note: >
+    Camera-zone metric calibration has not been performed. Monocular depth
+    across the three active cameras showed a 5x spread in floor-to-ceiling
+    estimates (9.49m / 1.76m / 3.52m) — fine for visualization, not for
+    measurement. This is the gate for real metric alignment and multi-camera
+    tracking (README.md, spark-3d-pipeline). Tracked as the top blocker.

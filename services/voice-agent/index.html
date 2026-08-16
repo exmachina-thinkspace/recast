@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Build Vitals — Voice Agent</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; background: #0b0d12; color: #e6e8ee; }
+  h1 { font-size: 20px; font-weight: 600; }
+  .sub { color: #9aa3b2; font-size: 13px; margin-bottom: 24px; }
+  #talk { font-size: 16px; padding: 14px 28px; border-radius: 10px; border: none; background: #3b82f6; color: white; cursor: pointer; }
+  #talk.recording { background: #ef4444; }
+  #talk:disabled { background: #555; cursor: not-allowed; }
+  textarea { width: 100%; box-sizing: border-box; margin-top: 16px; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #14171f; color: #e6e8ee; font-size: 14px; }
+  #send { margin-top: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid #333; background: #1c2030; color: #e6e8ee; cursor: pointer; }
+  .log { margin-top: 28px; }
+  .msg { padding: 10px 14px; border-radius: 10px; margin-bottom: 10px; font-size: 14px; line-height: 1.5; }
+  .msg.user { background: #1c2030; }
+  .msg.agent { background: #16281f; border-left: 3px solid #22c55e; }
+  .status { color: #9aa3b2; font-size: 12px; margin-top: 8px; min-height: 16px; }
+  .input-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; position: relative; }
+  .input-row textarea { margin-top: 0; flex: 1; }
+  #attachBtn { flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%; border: 1px solid #333; background: #1c2030; color: #e6e8ee; font-size: 20px; line-height: 1; cursor: pointer; }
+  #attachBtn:hover { border-color: #3b82f6; }
+  .attach-menu { position: absolute; left: 0; bottom: 46px; background: #14171f; border: 1px solid #333; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.4); min-width: 240px; overflow: hidden; z-index: 10; }
+  .attach-item { padding: 10px 14px; font-size: 13px; cursor: pointer; border-bottom: 1px solid #23262f; }
+  .attach-item:last-child { border-bottom: none; }
+  .attach-item:hover { background: #1c2030; }
+</style>
+</head>
+<body>
+  <h1>Build Vitals — Voice Agent</h1>
+  <div class="sub">Talk or type. Speech-to-text runs locally on this box (Whisper). Answers are grounded in the live BHI scorecard only.</div>
+
+  <button id="talk">Hold to talk</button>
+  <div class="status" id="status"></div>
+
+  <div class="input-row">
+    <button id="attachBtn" title="Attach / add-ons">+</button>
+    <div class="attach-menu" id="attachMenu" hidden>
+      <div class="attach-item" data-action="upload-image">📷&nbsp; Analyze a photo</div>
+      <div class="attach-item" data-action="zone-lobby">🏢&nbsp; What does the lobby look like?</div>
+      <div class="attach-item" data-action="zone-common">🏢&nbsp; What does the common area look like?</div>
+      <div class="attach-item" data-action="zone-swhall">🏢&nbsp; What does the SW hallway look like?</div>
+      <div class="attach-item" data-action="whats-next">🔄&nbsp; What could this building become?</div>
+    </div>
+    <textarea id="textInput" rows="2" placeholder="...or type your question here"></textarea>
+  </div>
+  <button id="send">Send</button>
+  <input type="file" id="imageFileInput" accept="image/*" hidden>
+
+  <div class="log" id="log"></div>
+
+<script>
+const talkBtn = document.getElementById('talk');
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+const textInput = document.getElementById('textInput');
+const sendBtn = document.getElementById('send');
+
+function addMsg(role, text) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = (role === 'user' ? 'You: ' : 'Agent: ') + text;
+  logEl.prepend(div);
+}
+
+function speak(text) {
+  // Runs locally in the browser/OS -- not a network call, doesn't touch
+  // the box's memory and doesn't send anything to a cloud TTS service.
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 1.0;
+  window.speechSynthesis.speak(utter);
+}
+
+// Reveals the answer sentence-by-sentence in the log, speaking each
+// sentence as it appears -- gives a "reading along as it generates" feel
+// without needing real token-level streaming from the backend, which
+// would mean touching the tool-calling loop for comparatively little
+// visible difference (the /chat call itself is already fast).
+function revealAndSpeak(text) {
+  const div = document.createElement('div');
+  div.className = 'msg agent';
+  div.textContent = 'Agent: ';
+  logEl.prepend(div);
+  const sentences = text.match(/[^.!?]+[.!?]+|\S+$/g) || [text];
+  let i = 0;
+  function next() {
+    if (i >= sentences.length) return;
+    const sentence = sentences[i++];
+    div.textContent += sentence;
+    const utter = new SpeechSynthesisUtterance(sentence);
+    utter.rate = 1.0;
+    utter.onend = next;
+    utter.onerror = next;   // don't get stuck if TTS fails on a sentence
+    window.speechSynthesis.speak(utter);
+  }
+  next();
+}
+
+async function askAgent(message) {
+  addMsg('user', message);
+  statusEl.textContent = 'thinking...';
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    statusEl.textContent = '';
+    revealAndSpeak(data.answer);
+  } catch (e) {
+    statusEl.textContent = 'error: ' + e.message;
+  }
+}
+
+sendBtn.onclick = () => {
+  const text = textInput.value.trim();
+  if (!text) return;
+  textInput.value = '';
+  askAgent(text);
+};
+textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+});
+
+// --- push to talk ---
+let mediaRecorder, chunks = [];
+
+talkBtn.addEventListener('mousedown', startRecording);
+talkBtn.addEventListener('touchstart', startRecording);
+talkBtn.addEventListener('mouseup', stopRecording);
+talkBtn.addEventListener('touchend', stopRecording);
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.onstop = onRecordingStop;
+    mediaRecorder.start();
+    talkBtn.classList.add('recording');
+    talkBtn.textContent = 'Listening...';
+  } catch (e) {
+    statusEl.textContent = 'mic error: ' + e.message;
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  }
+  talkBtn.classList.remove('recording');
+  talkBtn.textContent = 'Hold to talk';
+}
+
+async function onRecordingStop() {
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  statusEl.textContent = 'transcribing...';
+  talkBtn.disabled = true;
+  try {
+    const res = await fetch('/transcribe', { method: 'POST', body: blob });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    if (!data.text) { statusEl.textContent = 'heard nothing, try again'; talkBtn.disabled = false; return; }
+    statusEl.textContent = '';
+    talkBtn.disabled = false;
+    askAgent(data.text);
+  } catch (e) {
+    statusEl.textContent = 'error: ' + e.message;
+    talkBtn.disabled = false;
+  }
+}
+
+// --- attach button / add-ons dropdown ---
+const attachBtn = document.getElementById('attachBtn');
+const attachMenu = document.getElementById('attachMenu');
+const imageFileInput = document.getElementById('imageFileInput');
+
+attachBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  attachMenu.hidden = !attachMenu.hidden;
+});
+document.addEventListener('click', () => { attachMenu.hidden = true; });
+
+attachMenu.addEventListener('click', (e) => {
+  const item = e.target.closest('.attach-item');
+  if (!item) return;
+  attachMenu.hidden = true;
+  switch (item.dataset.action) {
+    case 'upload-image': imageFileInput.click(); break;
+    case 'zone-lobby': askAgent('What does the lobby look like?'); break;
+    case 'zone-common': askAgent('What does the common area look like?'); break;
+    case 'zone-swhall': askAgent('What does the SW hallway look like?'); break;
+    case 'whats-next': askAgent('What could this building become?'); break;
+  }
+});
+
+// Real upload -> /analyze-image (Cosmos), already built and tested earlier
+// -- this just gives it a UI for the first time.
+imageFileInput.addEventListener('change', async () => {
+  const file = imageFileInput.files[0];
+  if (!file) return;
+  addMsg('user', '[uploaded image: ' + file.name + ']');
+  statusEl.textContent = 'analyzing image...';
+  try {
+    const res = await fetch('/analyze-image', { method: 'POST', body: file });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    statusEl.textContent = '';
+    revealAndSpeak(data.description);
+  } catch (e) {
+    statusEl.textContent = 'error: ' + e.message;
+  } finally {
+    imageFileInput.value = '';
+  }
+});
+</script>
+</body>
+</html>
