@@ -33,12 +33,13 @@ import agent_tools
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLANS = os.path.expanduser("~/plans")
-VLLM_API = "http://127.0.0.1:8000/v1/chat/completions"
+VLLM_API = os.environ.get("RECAST_VLLM_API", "http://127.0.0.1:8000/v1/chat/completions")
+VLLM_MODELS_API = os.environ.get("RECAST_VLLM_MODELS_API", "http://127.0.0.1:8000/v1/models")
 VLLM_MODEL = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 
 WHISPER_MODEL_SIZE = "small"
 WHISPER_CACHE = "/media/acer01/SB-XTM5/models/whisper"
-COSMOS_API = "http://127.0.0.1:30082/v1/models"
+COSMOS_API = os.environ.get("RECAST_COSMOS_MODELS_API", "http://127.0.0.1:30082/v1/models")
 AUDIO_MIN_BYTES = 1024
 
 SYSTEM_PROMPT = (
@@ -55,6 +56,7 @@ SYSTEM_PROMPT = (
     "this is a spoken voice response, not a written report."
 )
 MAX_TOOL_ROUNDS = 4
+MAX_HISTORY_MESSAGES = 12
 
 _whisper_model = None
 
@@ -73,7 +75,7 @@ def service_health():
     `ok` intentionally means this HTTP wrapper is alive. Consumers should use
     the capability flags instead of showing AGENT ONLINE from `ok` alone.
     """
-    qwen_ready = _endpoint_ready("http://127.0.0.1:8000/v1/models")
+    qwen_ready = _endpoint_ready(VLLM_MODELS_API)
     cosmos_ready = _endpoint_ready(COSMOS_API)
     whisper_cached = os.path.isdir(WHISPER_CACHE)
     return {
@@ -129,17 +131,40 @@ def _vllm_call(messages, tools=None):
         return json.load(r)
 
 
-def run_agent_turn(user_message):
+def normalize_history(history):
+    if not isinstance(history, list):
+        return []
+    out = []
+    for item in history[-MAX_HISTORY_MESSAGES:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        if role == "agent":
+            role = "assistant"
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content") or item.get("text") or "").strip()
+        if not content:
+            continue
+        out.append({"role": role, "content": content[:3000]})
+    return out
+
+
+def run_agent_turn(user_message, history=None):
     """Real tool-calling loop: the model can call get_bhi/search_crime/
     search_permits/search_businesses (see agent_tools.py), see the real
     results, and either call more tools or give a final answer. Caps at
     MAX_TOOL_ROUNDS so a confused model can't loop forever. Returns
     (final_text, trace) where trace lists which tools were actually called,
     for debugging/demo transparency."""
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_message},
-    ]
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    history_messages = normalize_history(history)
+    if history_messages:
+        messages.extend(history_messages)
+        if history_messages[-1]["role"] != "user" or history_messages[-1]["content"] != user_message:
+            messages.append({"role": "user", "content": user_message})
+    else:
+        messages.append({"role": "user", "content": user_message})
     trace = []
     for _ in range(MAX_TOOL_ROUNDS):
         resp = _vllm_call(messages, tools=agent_tools.TOOL_SCHEMAS)
@@ -232,7 +257,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = json.loads(raw)
                 message = body.get("message", "")
-                answer, trace = run_agent_turn(message)
+                answer, trace = run_agent_turn(message, body.get("history"))
                 self._send_json(200, {"answer": answer, "tool_trace": trace})
             except Exception as e:
                 self._send_json(500, {"error": str(e)})

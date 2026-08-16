@@ -40,11 +40,11 @@ export async function getBuildingDetail(i) {
   return res.json();
 }
 
-export async function askAgent(message) {
+export async function askAgent(message, history = []) {
   const res = await fetch(`${API.agent}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, history }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error);
@@ -97,6 +97,10 @@ export async function generateReuseImage({
   backend = 'auto',
 }) {
   if (!proposedUse?.trim()) throw new Error('describe what the space should become');
+  const health = await getImageGenHealth();
+  if (!health.nim?.ready && !health.hosted?.configured) {
+    throw new Error(`Image generation backend offline: NIM at ${health.nim?.url || 'unknown'} is not ready and NVIDIA_API_KEY is not configured for hosted fallback.`);
+  }
   const body = {
     building: building || 'the selected building',
     current_use: currentUse || 'an underused room',
