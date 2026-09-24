@@ -219,17 +219,16 @@ const store = {
   set(v){ try { localStorage.setItem('gmp_tiles_key', v); } catch(e){} },
   del(){ try { localStorage.removeItem('gmp_tiles_key'); } catch(e){} }
 };
-/* Hackathon convenience: the Google Maps Platform key is baked in so the page loads without prompting.
-   Google Cloud project "GrowthHit Ads Grid", key "Spark Hack Map Tiles" (Map Tiles API). Anyone with this
-   file can use the key — restrict it to your demo domain / referrers in the Cloud Console before sharing
-   the file, and don't commit it to a public repo. A ?key= parameter or a key saved in this browser wins. */
-const DEFAULT_KEY = 'AIzaSyBUrfo2BAAN71j9u4qmfOpeCoX1bj3gwdY';
+/* The page needs a Google Maps Platform key with the Map Tiles API enabled (Photorealistic 3D Tiles).
+   Supply one as a ?key= URL parameter or paste it into the gate below (it is then saved in this browser).
+   The temporary demo key that was baked in here during the hackathon has been deleted. */
+const DEFAULT_KEY = '';
 const qs = new URLSearchParams(location.search);
 const stored = qs.get('key') || store.get() || DEFAULT_KEY;
 document.getElementById('key').value = stored;
 document.getElementById('go').onclick = () => start(document.getElementById('key').value.trim());
 document.getElementById('key').addEventListener('keydown', e => { if (e.key === 'Enter') start(e.target.value.trim()); });
-document.getElementById('forget').onclick = () => { store.del(); document.getElementById('key').value = DEFAULT_KEY; setErr('Stored key removed; the built-in key will be used.'); };
+document.getElementById('forget').onclick = () => { store.del(); document.getElementById('key').value = ''; setErr('Stored key removed. Paste a Map Tiles API key to continue.'); };
 function setErr(m){ document.getElementById('err').textContent = m || ''; }
 if (stored) start(stored);
 

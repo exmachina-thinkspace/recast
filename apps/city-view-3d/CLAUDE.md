@@ -25,7 +25,7 @@ Everything you need is in this folder. Read this file fully before editing `seat
 ## Runtime facts (don't fight these)
 
 - **CesiumJS 1.128 from the Cesium CDN**, `viewer` with `globe:false`, `requestRenderMode:true`. After changing anything visual call `viewer.scene.requestRender()`.
-- **Google Map Tiles API** (Photorealistic 3D Tiles) via `Cesium3DTileset.fromUrl('https://tile.googleapis.com/v1/3dtiles/root.json?key=…')`. The key is hard-coded in `DEFAULT_KEY` (line ~208) on purpose for the hackathon; it is being deleted after the event. `?key=…` in the URL or a key saved in localStorage overrides it. Keep the Google credit visible (`showCreditsOnScreen:true`).
+- **Google Map Tiles API** (Photorealistic 3D Tiles) via `Cesium3DTileset.fromUrl('https://tile.googleapis.com/v1/3dtiles/root.json?key=…')`. There is no baked-in key any more (the hackathon demo key was deleted after the event and `DEFAULT_KEY` is now empty): supply a key as `?key=…` in the URL or paste it into the gate, which saves it in localStorage. Keep the Google credit visible (`showCreditsOnScreen:true`).
 - The tiles are **one fused mesh** — there are no per-building objects to select or recolour. Buildings are "highlighted" by **classification**: each footprint becomes a `GroundPrimitive` volume with `classificationType: CESIUM_3D_TILE`; the tile mesh inside the volume is tinted. See `buildFootprints()` / `fpColor()` / `syncFootprints()`.
 - A `CustomShader` (`grayShader`) desaturates and dims the tiles (`u_gray`, `u_dim=0.6`). The "Gray map" chip toggles `u_gray`.
 - **Hit-testing does not use the classification pick id** — Cesium's shadow-volume pick pass doesn't cull per instance, so ids bleed between neighbours. `pickBuilding()` picks pins/labels via `scene.pick`, then falls back to `footprintAt()`: `scene.pickPosition` (mesh point under the cursor) → point-in-polygon against `F`. Keep it that way.
@@ -104,7 +104,7 @@ the `B` record (e.g. `"bid": "…"`, `"parcel": "…"`) via `embed_json.py --var
 | `const B / F / BV` ~156–165 | data. Use `tools/embed_json.py`. |
 | `colorBy`, `vcol()`, `renderLegend()` ~171 | how a building gets its colour + legend copy. |
 | `passes(b)` ~190 | filter chips (`all / vacant / empty / noenergy`) — add a chip in HTML + a case here. |
-| `DEFAULT_KEY`, `start()` ~208 | key + tileset load. Gate UI only appears if the key fails. |
+| `DEFAULT_KEY`, `start()` ~208 | key gate + tileset load. The gate shows until a key is supplied (`?key=` or one saved in this browser). |
 | `grayShader` ~248 | tile desaturation/dim. |
 | `buildViewer()` ~282 | Cesium viewer, one entity per building (label always; pin only when no footprint), click/hover handlers. |
 | `footprintAt()` / `pickBuilding()` ~366 | hit-testing (see runtime facts). |
@@ -124,7 +124,8 @@ the `B` record (e.g. `"bid": "…"`, `"parcel": "…"`) via `embed_json.py --var
 
 ## Verifying a change
 
-Open `seattle-office-vitals-3d.html` in Chrome/Safari (double-click). Expect: no key gate; gray dimmed city; painted
+Open `seattle-office-vitals-3d.html` in Chrome/Safari (double-click). Expect: the key gate on first open (paste a
+Map Tiles key once; it is remembered by that browser), then: gray dimmed city; painted
 buildings; click a building → card on the right; click plain city or Esc → card closes; chips filter paint;
 "Gray map" toggles colour; if `BV` has records, "Color: BHI" appears and recolours. Watch the console for errors.
 Note: Cesium tiles only decode while frames render — a backgrounded tab looks black until it is foregrounded.

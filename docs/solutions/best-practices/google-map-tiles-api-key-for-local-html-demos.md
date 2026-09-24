@@ -49,7 +49,8 @@ avoidable; and a leaked unrestricted key becomes someone else's bill.
 
 ## Examples
 
-`apps/city-view-3d/seattle-office-vitals-3d.html` (`DEFAULT_KEY`, key gate) — hackathon key, deleted after 2026-08-17.
+`apps/city-view-3d/seattle-office-vitals-3d.html` (`DEFAULT_KEY`, key gate) — the hackathon key was deleted in the
+Cloud Console and `DEFAULT_KEY` emptied on 2026-09-24; the page now relies on the key gate (`?key=` / localStorage).
 
 ## Related
 
